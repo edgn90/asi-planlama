@@ -100,8 +100,7 @@ if tuketim_file and stok_file:
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
 
-        # --- ANA DEPO AYRIŞTIRMA (GÜNCELLENMİŞ EŞLEŞTİRME MANTIĞI) ---
-        # "İ" ve "I" harfi farklılıklarını aşmak için 'contains' ve 'case=False' kullanıyoruz
+        # --- ANA DEPO AYRIŞTIRMA ---
         is_ana_depo = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
                       (df_raw_s['BIRIM ADI'].str.contains('ISTANBUL ISM', case=False, na=False)) & \
                       (df_raw_s['BIRIM TIPI'].str.contains('ISM', case=False, na=False))
@@ -130,13 +129,22 @@ if tuketim_file and stok_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- ANA EKRAN ---
+        # --- ANA EKRAN GÖRÜNÜMÜ ---
         st.markdown("---")
         if s_tarih:
             st.info(f"📅 **Analiz Edilen Rapor Dönemi:** {s_tarih} - {b_tarih} (Toplam {oto_gun_sayisi} Gün)")
 
-        col_m, col_d = st.columns([2, 1])
+        # ÜST BÖLÜM: SOLDA ANA DEPO, SAĞDA METRİKLER (İSTEDİĞİNİZ DEĞİŞİKLİK)
+        col_d, col_m = st.columns([1, 2]) # [1 (Depo), 2 (Metrikler)] oranı verildi
         
+        with col_d:
+            with st.expander("🚚 İL ANA DEPO STOK DURUMU (İSM)", expanded=True):
+                if not df_ana_depo_stok.empty:
+                    depo_list = df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']].sort_values('Stok', ascending=False)
+                    st.dataframe(depo_list, hide_index=True, use_container_width=True)
+                else:
+                    st.write("Depo verisi bulunamadı.")
+
         with col_m:
             toplam_sevk_doz = int(df_f['Gonderilecek'].sum())
             ihtiyac_kurum_sayisi = df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique()
@@ -144,15 +152,6 @@ if tuketim_file and stok_file:
             m1.metric("📦 GÖNDERİLECEK TOPLAM DOZ", f"{toplam_sevk_doz:,}".replace(",", "."))
             m2.metric("🏢 İhtiyaç Sahibi Kurum", ihtiyac_kurum_sayisi)
             st.write(f"⏳ **Planlanan Stok Süresi:** {plan_suresi} Gün")
-
-        with col_d:
-            with st.expander("🚚 İL ANA DEPO STOK DURUMU (İSM)", expanded=True):
-                # Depo listesini görselleştir
-                if not df_ana_depo_stok.empty:
-                    depo_list = df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']].sort_values('Stok', ascending=False)
-                    st.dataframe(depo_list, hide_index=True, use_container_width=True)
-                else:
-                    st.write("Depo verisi bulunamadı.")
 
         st.markdown("---")
 
