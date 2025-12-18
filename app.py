@@ -51,26 +51,37 @@ def to_excel(df):
         df.to_excel(writer, index=False, sheet_name='Plan')
     return output.getvalue()
 
+def tr_fix(text):
+    """PDF'deki Türkçe karakter sorununu çözmek için karakterleri dönüştürür."""
+    rep = {"İ":"I","ı":"i","Ğ":"G","ğ":"g","Ş":"S","ş":"s","ç":"c","Ç":"C","ö":"o","Ö":"O","ü":"u","Ü":"U"}
+    for k, v in rep.items():
+        text = text.replace(k, v)
+    return text
+
 def to_pdf(df, title):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", "B", 14)
-    pdf.cell(0, 10, title, ln=True, align='C')
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, tr_fix(title), ln=True, align='C')
     pdf.ln(5)
-    pdf.set_font("Arial", "B", 8)
+    
+    pdf.set_font("Helvetica", "B", 8)
     cols = df.columns.tolist()
     for col in cols:
-        pdf.cell(32, 8, str(col), 1)
+        pdf.cell(32, 8, tr_fix(str(col)), 1)
     pdf.ln()
-    pdf.set_font("Arial", "", 7)
+    
+    pdf.set_font("Helvetica", "", 7)
     for i in range(len(df)):
         for col in cols:
-            val = str(df.iloc[i][col])
+            val = tr_fix(str(df.iloc[i][col]))
             pdf.cell(32, 7, val[:22], 1)
         pdf.ln()
-    return pdf.output()
+    
+    # HATA ÇÖZÜMÜ: bytearray'i bytes formatına çeviriyoruz
+    return bytes(pdf.output())
 
-# --- DOSYA YÜKLEME ALANI (HER ZAMAN GÖRÜNÜR) ---
+# --- DOSYA YÜKLEME ALANI ---
 col_u1, col_u2 = st.columns(2)
 with col_u1:
     tuketim_file = st.file_uploader("📂 1. Dönemsel Tüketim Raporu (CSV)", type=["csv"])
@@ -80,16 +91,13 @@ with col_u2:
 # --- ANA PROGRAM ---
 if tuketim_file and stok_file:
     try:
-        # Tarih ve Gün Sayısı
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         if s_tarih:
-            st.sidebar.info(f"📅 Rapor Dönemi: {s_tarih} - {b_tarih}\n({oto_gun_sayisi} Gün üzerinden hesaplanıyor)")
+            st.sidebar.info(f"📅 Rapor Dönemi: {s_tarih} - {b_tarih}\n({oto_gun_sayisi} Gün)")
 
-        # Dosyaları Oku
         df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='iso-8859-9')
         df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
         
-        # Temizlik ve Hazırlık
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
@@ -99,52 +107,48 @@ if tuketim_file and stok_file:
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
         
-        # Gruplama ve Birleştirme
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
         df_s = df_raw_s.groupby(['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
         res_df = pd.merge(df_c, df_s, left_on=['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'], right_on=['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'], how='outer').fillna(0)
         res_df = res_df[['ILÇE', 'BIRIM', 'ÜRÜN TANIMI', 'Tuketim', 'Stok']]
         res_df.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok']
 
-        # Hesaplama
         res_df['Ihtiyac'] = (((res_df['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
 
-        # Filtreler
         st.sidebar.markdown("---")
-        secilen_ilceler = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
-        df_filtered = res_df[res_df['Ilce'].isin(secilen_ilceler)] if secilen_ilceler else res_df
+        sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
+        df_f = res_df[res_df['Ilce'].isin(sec_ilce)] if sec_ilce else res_df
 
-        # Sekmeler
         tab1, tab2 = st.tabs(["🏢 Kurum Bazlı Plan", "📍 İlçe Bazlı Özet"])
 
         with tab1:
-            final1 = df_filtered[df_filtered['Gonderilecek'] > 0].sort_values('Gonderilecek', ascending=False)
+            f1 = df_f[df_f['Gonderilecek'] > 0].sort_values('Gonderilecek', ascending=False)
             st.subheader("Kurum Bazlı Dağıtım Listesi")
-            st.dataframe(final1, use_container_width=True)
+            st.dataframe(f1, use_container_width=True)
             
             c1, c2 = st.columns(2)
             with c1:
-                st.download_button("📥 Excel Olarak İndir", to_excel(final1), "kurum_plan.xlsx")
+                st.download_button("📥 Excel Olarak İndir", to_excel(f1), "kurum_plan.xlsx")
             with c2:
-                st.download_button("📥 PDF Olarak İndir", to_pdf(final1, "Kurum Plani"), "kurum_plan.pdf")
+                st.download_button("📥 PDF Olarak İndir", to_pdf(f1, "Kurum Plani"), "kurum_plan.pdf")
 
         with tab2:
-            df_ilce = df_filtered.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
-            df_ilce['Ihtiyac'] = (((df_ilce['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_ilce['Stok']
-            df_ilce['Gonderilecek'] = df_ilce['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
-            final2 = df_ilce[df_ilce['Gonderilecek'] > 0].sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
+            df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
+            df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
+            df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
+            f2 = df_i[df_i['Gonderilecek'] > 0].sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
             
             st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
-            st.dataframe(final2, use_container_width=True)
+            st.dataframe(f2, use_container_width=True)
             
             c3, c4 = st.columns(2)
             with c3:
-                st.download_button("📥 Excel (İlçe) İndir", to_excel(final2), "ilce_plan.xlsx")
+                st.download_button("📥 Excel (İlçe) İndir", to_excel(f2), "ilce_plan.xlsx")
             with c4:
-                st.download_button("📥 PDF (İlçe) İndir", to_pdf(final2, "Ilce Plani"), "ilce_plan.pdf")
+                st.download_button("📥 PDF (İlçe) İndir", to_pdf(f2, "Ilce Plani"), "ilce_plan.pdf")
 
     except Exception as e:
         st.error(f"Bir hata oluştu: {e}")
 else:
-    st.info("Lütfen hesaplama yapmak için her iki CSV dosyasını da yukarıdaki alanlara yükleyin.")
+    st.info("Lütfen her iki CSV dosyasını da yükleyin.")
