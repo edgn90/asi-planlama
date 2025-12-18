@@ -10,11 +10,6 @@ st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
 
 st.title("💉 Akıllı Aşı Talep Tahmini ve Stok Yönetim Paneli")
 
-# --- YAN MENÜ (AYARLAR) ---
-st.sidebar.header("⚙️ Planlama Parametreleri")
-plan_suresi = st.sidebar.slider("Planlanacak Süre (Gün)", 7, 90, 15)
-guvenlik_marji = st.sidebar.slider("Güvenlik Stoğu (%)", 0, 100, 20) / 100
-
 # --- YARDIMCI FONKSİYONLAR ---
 def clean_number(x):
     if isinstance(x, str):
@@ -76,6 +71,11 @@ def to_pdf(df, title):
         pdf.ln()
     return bytes(pdf.output())
 
+# --- YAN MENÜ (AYARLAR) ---
+st.sidebar.header("⚙️ Planlama Parametreleri")
+plan_suresi = st.sidebar.slider("Planlanacak Süre (Gün)", 7, 90, 15)
+guvenlik_marji = st.sidebar.slider("Güvenlik Stoğu (%)", 0, 100, 20) / 100
+
 # --- DOSYA YÜKLEME ALANI ---
 col_u1, col_u2 = st.columns(2)
 with col_u1:
@@ -110,48 +110,45 @@ if tuketim_file and stok_file:
         
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim']
-        
         df_s = df_stok_hesaplama.groupby(['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
         df_s.columns = ['Ilce', 'Birim', 'Urun', 'Stok']
         
         res_df = pd.merge(df_c, df_s, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
-        res_df = res_df[['Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok']]
-
         res_df['Ihtiyac'] = (((res_df['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
 
-        # Filtreleme
+        # --- YAN MENÜ: FİLTRELER ---
         st.sidebar.markdown("---")
-        sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
-        sec_asi = st.sidebar.multiselect("💉 Aşı Türü Filtrele", options=sorted(res_df['Urun'].unique()))
+        st.sidebar.header("🔍 Filtreleme")
+        sec_ilce = st.sidebar.multiselect("📍 İlçe Seçin", options=sorted(res_df['Ilce'].unique()))
+        sec_asi = st.sidebar.multiselect("💉 Aşı Türü Seçin", options=sorted(res_df['Urun'].unique()))
         
+        # --- YAN MENÜ: ANA DEPO KUTUSU (İSTEDİĞİNİZ DEĞİŞİKLİK) ---
+        st.sidebar.markdown("---")
+        with st.sidebar.expander("🚚 İL ANA DEPO STOKLARI (İSM)", expanded=True):
+            if not df_ana_depo_stok.empty:
+                depo_list = df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']].sort_values('Stok', ascending=False)
+                st.dataframe(depo_list, hide_index=True, use_container_width=True)
+            else:
+                st.write("Depo verisi bulunamadı.")
+
+        # --- ANA EKRAN GÖRÜNÜMÜ ---
         df_f = res_df.copy()
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- ANA EKRAN GÖRÜNÜMÜ ---
         st.markdown("---")
         if s_tarih:
             st.info(f"📅 **Analiz Edilen Rapor Dönemi:** {s_tarih} - {b_tarih} (Toplam {oto_gun_sayisi} Gün)")
 
-        # ÜST BÖLÜM: SOLDA ANA DEPO, SAĞDA METRİKLER (İSTEDİĞİNİZ DEĞİŞİKLİK)
-        col_d, col_m = st.columns([1, 2]) # [1 (Depo), 2 (Metrikler)] oranı verildi
+        # Metrikler
+        toplam_sevk_doz = int(df_f['Gonderilecek'].sum())
+        ihtiyac_kurum_sayisi = df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique()
         
-        with col_d:
-            with st.expander("🚚 İL ANA DEPO STOK DURUMU (İSM)", expanded=True):
-                if not df_ana_depo_stok.empty:
-                    depo_list = df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']].sort_values('Stok', ascending=False)
-                    st.dataframe(depo_list, hide_index=True, use_container_width=True)
-                else:
-                    st.write("Depo verisi bulunamadı.")
-
-        with col_m:
-            toplam_sevk_doz = int(df_f['Gonderilecek'].sum())
-            ihtiyac_kurum_sayisi = df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique()
-            m1, m2 = st.columns(2)
-            m1.metric("📦 GÖNDERİLECEK TOPLAM DOZ", f"{toplam_sevk_doz:,}".replace(",", "."))
-            m2.metric("🏢 İhtiyaç Sahibi Kurum", ihtiyac_kurum_sayisi)
-            st.write(f"⏳ **Planlanan Stok Süresi:** {plan_suresi} Gün")
+        m1, m2, m3 = st.columns(3)
+        m1.metric("📦 GÖNDERİLECEK TOPLAM DOZ", f"{toplam_sevk_doz:,}".replace(",", "."))
+        m2.metric("🏢 İhtiyaç Sahibi Kurum", ihtiyac_kurum_sayisi)
+        m3.metric("⏳ Planlanan Süre", f"{plan_suresi} Gün")
 
         st.markdown("---")
 
