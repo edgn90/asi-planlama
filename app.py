@@ -50,9 +50,7 @@ def tr_fix(text):
     """PDF için Türkçe karakterleri ve emojileri temizler."""
     if not isinstance(text, str):
         text = str(text)
-    # Emojileri temizle (🚨 ve ✅ gibi)
     text = text.replace("🚨", "").replace("✅", "")
-    # Türkçe karakterleri dönüştür
     rep = {"İ":"I","ı":"i","Ğ":"G","ğ":"g","Ş":"S","ş":"s","ç":"c","Ç":"C","ö":"o","Ö":"O","ü":"u","Ü":"U"}
     for k, v in rep.items():
         text = text.replace(k, v)
@@ -67,16 +65,18 @@ def to_pdf(df, title):
     
     pdf.set_font("Helvetica", "B", 8)
     cols = df.columns.tolist()
-    # Sütun başlıklarını temizle ve yaz
+    # Kolon genişliği hesaplama (Daha esnek bir görünüm için)
+    col_width = 190 / len(cols)
+    
     for col in cols:
-        pdf.cell(27, 8, tr_fix(str(col)), 1)
+        pdf.cell(col_width, 8, tr_fix(str(col)), 1)
     pdf.ln()
     
     pdf.set_font("Helvetica", "", 7)
     for i in range(len(df)):
         for col in cols:
             val = tr_fix(str(df.iloc[i][col]))
-            pdf.cell(27, 7, val[:20], 1)
+            pdf.cell(col_width, 7, val[:25], 1)
         pdf.ln()
     
     return bytes(pdf.output())
@@ -170,22 +170,29 @@ if tuketim_file and stok_file:
 
         with tab1:
             f1 = df_f[df_f['Gonderilecek'] > 0].sort_values(['Durum', 'Gonderilecek'], ascending=[False, False])
-            # Ekranda emojiler görünecek
             st.dataframe(f1[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek']], use_container_width=True)
             
             c1, c2 = st.columns(2)
             with c1:
-                st.download_button("📥 Excel İndir", to_excel(f1), "plan.xlsx")
+                st.download_button("📥 Excel İndir", to_excel(f1), "kurum_bazli_plan.xlsx")
             with c2:
-                # PDF oluşturulurken tr_fix emojileri silecek
-                st.download_button("📥 PDF İndir", to_pdf(f1, "Dagitim Plani"), "plan.pdf")
+                st.download_button("📥 PDF İndir", to_pdf(f1, "Kurum Bazli Dagitim Plani"), "kurum_bazli_plan.pdf")
 
         with tab2:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
             f2 = df_i[df_i['Gonderilecek'] > 0].sort_values('Gonderilecek', ascending=False)
+            
+            st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
             st.dataframe(f2, use_container_width=True)
+            
+            # İHTİYAÇ DUYDUĞUNUZ EKLEME: İLÇE BAZLI İNDİRME BUTONLARI
+            c3, c4 = st.columns(2)
+            with c3:
+                st.download_button("📥 Excel (İlçe) İndir", to_excel(f2), "ilce_bazli_ozet.xlsx")
+            with c4:
+                st.download_button("📥 PDF (İlçe) İndir", to_pdf(f2, "Ilce Bazli Toplam Asi Ihtiyaci"), "ilce_bazli_ozet.pdf")
 
     except Exception as e:
         st.error(f"Hata: {e}")
