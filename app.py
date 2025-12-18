@@ -100,15 +100,15 @@ if tuketim_file and stok_file:
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
 
-        # --- ANA DEPO AYRIŞTIRMA (İSTEDİĞİNİZ GÜNCELLEME) ---
-        is_ana_depo = (df_raw_s['ILÇE'].str.upper() == 'FATİH') & \
-                      (df_raw_s['BIRIM ADI'].str.upper() == 'İSTANBUL İSM') & \
-                      (df_raw_s['BIRIM TIPI'].str.upper() == 'İSM')
+        # --- ANA DEPO AYRIŞTIRMA (GÜNCELLENMİŞ EŞLEŞTİRME MANTIĞI) ---
+        # "İ" ve "I" harfi farklılıklarını aşmak için 'contains' ve 'case=False' kullanıyoruz
+        is_ana_depo = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
+                      (df_raw_s['BIRIM ADI'].str.contains('ISTANBUL ISM', case=False, na=False)) & \
+                      (df_raw_s['BIRIM TIPI'].str.contains('ISM', case=False, na=False))
         
         df_ana_depo_stok = df_raw_s[is_ana_depo].copy()
-        df_stok_hesaplama = df_raw_s[~is_ana_depo].copy() # Hesaplamaya giren normal stok
+        df_stok_hesaplama = df_raw_s[~is_ana_depo].copy()
         
-        # Gruplama ve Birleştirme
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim']
         
@@ -130,12 +130,11 @@ if tuketim_file and stok_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- ANA EKRAN GÖRÜNÜMÜ ---
+        # --- ANA EKRAN ---
         st.markdown("---")
         if s_tarih:
             st.info(f"📅 **Analiz Edilen Rapor Dönemi:** {s_tarih} - {b_tarih} (Toplam {oto_gun_sayisi} Gün)")
 
-        # ÜST BÖLÜM: Metrikler ve Sağda Ana Depo
         col_m, col_d = st.columns([2, 1])
         
         with col_m:
@@ -148,8 +147,12 @@ if tuketim_file and stok_file:
 
         with col_d:
             with st.expander("🚚 İL ANA DEPO STOK DURUMU (İSM)", expanded=True):
-                depo_list = df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']].sort_values('Stok', ascending=False)
-                st.dataframe(depo_list, hide_index=True, use_container_width=True)
+                # Depo listesini görselleştir
+                if not df_ana_depo_stok.empty:
+                    depo_list = df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']].sort_values('Stok', ascending=False)
+                    st.dataframe(depo_list, hide_index=True, use_container_width=True)
+                else:
+                    st.write("Depo verisi bulunamadı.")
 
         st.markdown("---")
 
