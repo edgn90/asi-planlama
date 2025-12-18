@@ -86,31 +86,38 @@ with col_u2:
 # --- ANA PROGRAM ---
 if tuketim_file and stok_file:
     try:
-        # Tarih ve Gün Sayısı (OTOMATİK ALGILAMA)
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
-        # Dosyaları Oku
         df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='iso-8859-9')
         df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
         
-        # Veri Hazırlama
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
-        df_raw_s[['ILÇE', 'BIRIM ADI']] = df_raw_s[['ILÇE', 'BIRIM ADI']].ffill()
+        df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']].ffill()
         
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
+
+        # --- ANA DEPO AYRIŞTIRMA (İSTEDİĞİNİZ GÜNCELLEME) ---
+        is_ana_depo = (df_raw_s['ILÇE'].str.upper() == 'FATİH') & \
+                      (df_raw_s['BIRIM ADI'].str.upper() == 'İSTANBUL İSM') & \
+                      (df_raw_s['BIRIM TIPI'].str.upper() == 'İSM')
+        
+        df_ana_depo_stok = df_raw_s[is_ana_depo].copy()
+        df_stok_hesaplama = df_raw_s[~is_ana_depo].copy() # Hesaplamaya giren normal stok
         
         # Gruplama ve Birleştirme
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
-        df_s = df_raw_s.groupby(['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
-        res_df = pd.merge(df_c, df_s, left_on=['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'], right_on=['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'], how='outer').fillna(0)
-        res_df = res_df[['ILÇE', 'BIRIM', 'ÜRÜN TANIMI', 'Tuketim', 'Stok']]
-        res_df.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok']
+        df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim']
+        
+        df_s = df_stok_hesaplama.groupby(['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
+        df_s.columns = ['Ilce', 'Birim', 'Urun', 'Stok']
+        
+        res_df = pd.merge(df_c, df_s, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
+        res_df = res_df[['Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok']]
 
-        # Hesaplama (Otomatik gün sayısı kullanılıyor)
         res_df['Ihtiyac'] = (((res_df['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
 
@@ -123,30 +130,29 @@ if tuketim_file and stok_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- ANA EKRAN GÜNCELLEMESİ (TARİH VE METRİKLER) ---
+        # --- ANA EKRAN GÖRÜNÜMÜ ---
         st.markdown("---")
-        
-        # 1. Otomatik Tarih Bilgisini Ana Ekranda Göster
         if s_tarih:
             st.info(f"📅 **Analiz Edilen Rapor Dönemi:** {s_tarih} - {b_tarih} (Toplam {oto_gun_sayisi} Gün)")
-        else:
-            st.warning("⚠️ Rapor tarihleri otomatik okunamadı, hesaplamalar varsayılan 91 gün üzerinden yapılıyor.")
 
-        # 2. Özet Metrikler
-        toplam_sevk_doz = int(df_f['Gonderilecek'].sum())
-        ihtiyac_kurum_sayisi = df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique()
+        # ÜST BÖLÜM: Metrikler ve Sağda Ana Depo
+        col_m, col_d = st.columns([2, 1])
         
-        m1, m2, m3 = st.columns(3)
-        with m1:
-            st.metric("📦 GÖNDERİLECEK TOPLAM DOZ", f"{toplam_sevk_doz:,}".replace(",", "."))
-        with m2:
-            st.metric("🏢 İhtiyaç Sahibi Kurum", ihtiyac_kurum_sayisi)
-        with m3:
-            st.metric("⏳ Planlanan Stok Süresi", f"{plan_suresi} Gün")
-        
+        with col_m:
+            toplam_sevk_doz = int(df_f['Gonderilecek'].sum())
+            ihtiyac_kurum_sayisi = df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique()
+            m1, m2 = st.columns(2)
+            m1.metric("📦 GÖNDERİLECEK TOPLAM DOZ", f"{toplam_sevk_doz:,}".replace(",", "."))
+            m2.metric("🏢 İhtiyaç Sahibi Kurum", ihtiyac_kurum_sayisi)
+            st.write(f"⏳ **Planlanan Stok Süresi:** {plan_suresi} Gün")
+
+        with col_d:
+            with st.expander("🚚 İL ANA DEPO STOK DURUMU (İSM)", expanded=True):
+                depo_list = df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']].sort_values('Stok', ascending=False)
+                st.dataframe(depo_list, hide_index=True, use_container_width=True)
+
         st.markdown("---")
 
-        # Sekmeler
         tab1, tab2 = st.tabs(["🏢 Kurum Bazlı Plan", "📍 İlçe Bazlı Özet"])
 
         with tab1:
@@ -171,4 +177,4 @@ if tuketim_file and stok_file:
     except Exception as e:
         st.error(f"Bir hata oluştu: {e}")
 else:
-    st.info("Lütfen hesaplama yapmak için her iki CSV dosyasını da yukarıdaki alanlara yükleyin.")
+    st.info("Lütfen dosyaları yükleyin.")
