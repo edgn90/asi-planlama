@@ -47,10 +47,16 @@ def to_excel(df):
     return output.getvalue()
 
 def tr_fix(text):
+    """PDF için Türkçe karakterleri ve emojileri temizler."""
+    if not isinstance(text, str):
+        text = str(text)
+    # Emojileri temizle (🚨 ve ✅ gibi)
+    text = text.replace("🚨", "").replace("✅", "")
+    # Türkçe karakterleri dönüştür
     rep = {"İ":"I","ı":"i","Ğ":"G","ğ":"g","Ş":"S","ş":"s","ç":"c","Ç":"C","ö":"o","Ö":"O","ü":"u","Ü":"U"}
     for k, v in rep.items():
         text = text.replace(k, v)
-    return text
+    return text.strip()
 
 def to_pdf(df, title):
     pdf = FPDF()
@@ -58,17 +64,21 @@ def to_pdf(df, title):
     pdf.set_font("Helvetica", "B", 14)
     pdf.cell(0, 10, tr_fix(title), ln=True, align='C')
     pdf.ln(5)
+    
     pdf.set_font("Helvetica", "B", 8)
     cols = df.columns.tolist()
+    # Sütun başlıklarını temizle ve yaz
     for col in cols:
-        pdf.cell(32, 8, tr_fix(str(col)), 1)
+        pdf.cell(27, 8, tr_fix(str(col)), 1)
     pdf.ln()
+    
     pdf.set_font("Helvetica", "", 7)
     for i in range(len(df)):
         for col in cols:
             val = tr_fix(str(df.iloc[i][col]))
-            pdf.cell(32, 7, val[:22], 1)
+            pdf.cell(27, 7, val[:20], 1)
         pdf.ln()
+    
     return bytes(pdf.output())
 
 # --- YAN MENÜ (AYARLAR) ---
@@ -116,13 +126,12 @@ if tuketim_file and stok_file:
         
         res_df = pd.merge(df_c, df_s, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
         
-        # --- HESAPLAMA MANTIĞI ---
+        # Hesaplama
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
         
-        # Kritik Durum Tespiti
-        res_df['Yetme_Suresi'] = res_df.apply(lambda r: r['Stok'] / r['Gunluk_Hiz'] if r['Gunluk_Hiz'] > 0 else 999, axis=1)
+        res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
         res_df['Durum'] = res_df['Yetme_Suresi'].apply(lambda x: "🚨 KRİTİK" if x < kritik_esik else "✅ Yeterli")
 
         # --- YAN MENÜ: FİLTRELER VE DEPO ---
@@ -134,7 +143,7 @@ if tuketim_file and stok_file:
         with st.sidebar.expander("🚚 İL ANA DEPO STOKLARI", expanded=False):
             st.dataframe(df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']], hide_index=True)
 
-        # --- ANA EKRAN GÖRÜNÜMÜ ---
+        # --- ANA EKRAN ---
         df_f = res_df.copy()
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
@@ -149,16 +158,11 @@ if tuketim_file and stok_file:
         
         m1, m2, m3 = st.columns(3)
         m1.metric("📦 TOPLAM SEVKİYAT (DOZ)", f"{toplam_sevk:,}".replace(",", "."))
-        m2.metric("🚨 KRİTİK STOK SAYISI", kritik_sayisi, delta_color="inverse")
+        m2.metric("🚨 KRİTİK STOK SAYISI", kritik_sayisi)
         m3.metric("🏢 KURUM SAYISI", df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique())
 
-        # --- KRİRMIZI ALARM PANELİ ---
         if kritik_sayisi > 0:
-            with st.container():
-                st.error(f"⚠️ **DİKKAT:** Şu an stokları {kritik_esik} günden az kalan {kritik_sayisi} birim/ürün eşleşmesi tespit edildi!")
-                with st.expander("🚨 Kritik Durumdaki Birimleri Listele"):
-                    kritik_liste = df_f[df_f['Durum'] == "🚨 KRİTİK"].sort_values('Yetme_Suresi')
-                    st.table(kritik_liste[['Ilce', 'Birim', 'Urun', 'Stok', 'Yetme_Suresi']].head(20))
+            st.error(f"⚠️ **Kritik Eşik Uyarısı:** Stoğu {kritik_esik} günden az kalan {kritik_sayisi} birim tespit edildi.")
 
         st.markdown("---")
 
@@ -166,10 +170,15 @@ if tuketim_file and stok_file:
 
         with tab1:
             f1 = df_f[df_f['Gonderilecek'] > 0].sort_values(['Durum', 'Gonderilecek'], ascending=[False, False])
+            # Ekranda emojiler görünecek
             st.dataframe(f1[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek']], use_container_width=True)
+            
             c1, c2 = st.columns(2)
-            with c1: st.download_button("📥 Excel İndir", to_excel(f1), "plan.xlsx")
-            with c2: st.download_button("📥 PDF İndir", to_pdf(f1, "Dagitim Plani"), "plan.pdf")
+            with c1:
+                st.download_button("📥 Excel İndir", to_excel(f1), "plan.xlsx")
+            with c2:
+                # PDF oluşturulurken tr_fix emojileri silecek
+                st.download_button("📥 PDF İndir", to_pdf(f1, "Dagitim Plani"), "plan.pdf")
 
         with tab2:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
