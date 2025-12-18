@@ -75,6 +75,7 @@ def to_pdf(df, title):
 st.sidebar.header("⚙️ Planlama Parametreleri")
 plan_suresi = st.sidebar.slider("Planlanacak Süre (Gün)", 7, 90, 15)
 guvenlik_marji = st.sidebar.slider("Güvenlik Stoğu (%)", 0, 100, 20) / 100
+kritik_esik = st.sidebar.number_input("Kritik Stok Eşiği (Gün)", value=3)
 
 # --- DOSYA YÜKLEME ALANI ---
 col_u1, col_u2 = st.columns(2)
@@ -114,23 +115,24 @@ if tuketim_file and stok_file:
         df_s.columns = ['Ilce', 'Birim', 'Urun', 'Stok']
         
         res_df = pd.merge(df_c, df_s, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
-        res_df['Ihtiyac'] = (((res_df['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
+        
+        # --- HESAPLAMA MANTIĞI ---
+        res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
+        res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
+        
+        # Kritik Durum Tespiti
+        res_df['Yetme_Suresi'] = res_df.apply(lambda r: r['Stok'] / r['Gunluk_Hiz'] if r['Gunluk_Hiz'] > 0 else 999, axis=1)
+        res_df['Durum'] = res_df['Yetme_Suresi'].apply(lambda x: "🚨 KRİTİK" if x < kritik_esik else "✅ Yeterli")
 
-        # --- YAN MENÜ: FİLTRELER ---
+        # --- YAN MENÜ: FİLTRELER VE DEPO ---
         st.sidebar.markdown("---")
-        st.sidebar.header("🔍 Filtreleme")
         sec_ilce = st.sidebar.multiselect("📍 İlçe Seçin", options=sorted(res_df['Ilce'].unique()))
         sec_asi = st.sidebar.multiselect("💉 Aşı Türü Seçin", options=sorted(res_df['Urun'].unique()))
         
-        # --- YAN MENÜ: ANA DEPO KUTUSU (İSTEDİĞİNİZ DEĞİŞİKLİK) ---
         st.sidebar.markdown("---")
-        with st.sidebar.expander("🚚 İL ANA DEPO STOKLARI (İSM)", expanded=True):
-            if not df_ana_depo_stok.empty:
-                depo_list = df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']].sort_values('Stok', ascending=False)
-                st.dataframe(depo_list, hide_index=True, use_container_width=True)
-            else:
-                st.write("Depo verisi bulunamadı.")
+        with st.sidebar.expander("🚚 İL ANA DEPO STOKLARI", expanded=False):
+            st.dataframe(df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']], hide_index=True)
 
         # --- ANA EKRAN GÖRÜNÜMÜ ---
         df_f = res_df.copy()
@@ -139,41 +141,44 @@ if tuketim_file and stok_file:
 
         st.markdown("---")
         if s_tarih:
-            st.info(f"📅 **Analiz Edilen Rapor Dönemi:** {s_tarih} - {b_tarih} (Toplam {oto_gun_sayisi} Gün)")
+            st.info(f"📅 **Rapor Dönemi:** {s_tarih} - {b_tarih} ({oto_gun_sayisi} Gün)")
 
         # Metrikler
-        toplam_sevk_doz = int(df_f['Gonderilecek'].sum())
-        ihtiyac_kurum_sayisi = df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique()
+        toplam_sevk = int(df_f['Gonderilecek'].sum())
+        kritik_sayisi = len(df_f[df_f['Durum'] == "🚨 KRİTİK"])
         
         m1, m2, m3 = st.columns(3)
-        m1.metric("📦 GÖNDERİLECEK TOPLAM DOZ", f"{toplam_sevk_doz:,}".replace(",", "."))
-        m2.metric("🏢 İhtiyaç Sahibi Kurum", ihtiyac_kurum_sayisi)
-        m3.metric("⏳ Planlanan Süre", f"{plan_suresi} Gün")
+        m1.metric("📦 TOPLAM SEVKİYAT (DOZ)", f"{toplam_sevk:,}".replace(",", "."))
+        m2.metric("🚨 KRİTİK STOK SAYISI", kritik_sayisi, delta_color="inverse")
+        m3.metric("🏢 KURUM SAYISI", df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique())
+
+        # --- KRİRMIZI ALARM PANELİ ---
+        if kritik_sayisi > 0:
+            with st.container():
+                st.error(f"⚠️ **DİKKAT:** Şu an stokları {kritik_esik} günden az kalan {kritik_sayisi} birim/ürün eşleşmesi tespit edildi!")
+                with st.expander("🚨 Kritik Durumdaki Birimleri Listele"):
+                    kritik_liste = df_f[df_f['Durum'] == "🚨 KRİTİK"].sort_values('Yetme_Suresi')
+                    st.table(kritik_liste[['Ilce', 'Birim', 'Urun', 'Stok', 'Yetme_Suresi']].head(20))
 
         st.markdown("---")
 
         tab1, tab2 = st.tabs(["🏢 Kurum Bazlı Plan", "📍 İlçe Bazlı Özet"])
 
         with tab1:
-            f1 = df_f[df_f['Gonderilecek'] > 0].sort_values('Gonderilecek', ascending=False)
-            st.subheader("Kurum Bazlı Dağıtım Listesi")
-            st.dataframe(f1, use_container_width=True)
+            f1 = df_f[df_f['Gonderilecek'] > 0].sort_values(['Durum', 'Gonderilecek'], ascending=[False, False])
+            st.dataframe(f1[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek']], use_container_width=True)
             c1, c2 = st.columns(2)
-            with c1: st.download_button("📥 Excel İndir", to_excel(f1), "kurum_plan.xlsx")
-            with c2: st.download_button("📥 PDF İndir", to_pdf(f1, "Kurum Plani"), "kurum_plan.pdf")
+            with c1: st.download_button("📥 Excel İndir", to_excel(f1), "plan.xlsx")
+            with c2: st.download_button("📥 PDF İndir", to_pdf(f1, "Dagitim Plani"), "plan.pdf")
 
         with tab2:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
-            f2 = df_i[df_i['Gonderilecek'] > 0].sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
-            st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
+            f2 = df_i[df_i['Gonderilecek'] > 0].sort_values('Gonderilecek', ascending=False)
             st.dataframe(f2, use_container_width=True)
-            c3, c4 = st.columns(2)
-            with c3: st.download_button("📥 Excel (İlçe) İndir", to_excel(f2), "ilce_plan.xlsx")
-            with c4: st.download_button("📥 PDF (İlçe) İndir", to_pdf(f2, "Ilce Plani"), "ilce_plan.pdf")
 
     except Exception as e:
-        st.error(f"Bir hata oluştu: {e}")
+        st.error(f"Hata: {e}")
 else:
     st.info("Lütfen dosyaları yükleyin.")
