@@ -86,11 +86,14 @@ with col_u2:
 # --- ANA PROGRAM ---
 if tuketim_file and stok_file:
     try:
+        # Tarih ve Gün Sayısı (OTOMATİK ALGILAMA)
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
+        # Dosyaları Oku
         df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='iso-8859-9')
         df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
         
+        # Veri Hazırlama
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
@@ -100,12 +103,14 @@ if tuketim_file and stok_file:
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
         
+        # Gruplama ve Birleştirme
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
         df_s = df_raw_s.groupby(['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
         res_df = pd.merge(df_c, df_s, left_on=['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'], right_on=['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'], how='outer').fillna(0)
         res_df = res_df[['ILÇE', 'BIRIM', 'ÜRÜN TANIMI', 'Tuketim', 'Stok']]
         res_df.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok']
 
+        # Hesaplama (Otomatik gün sayısı kullanılıyor)
         res_df['Ihtiyac'] = (((res_df['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
 
@@ -118,8 +123,16 @@ if tuketim_file and stok_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- ANA EKRAN ÖZET METRİKLERİ (İSTEDİĞİNİZ GÜNCELLEME) ---
+        # --- ANA EKRAN GÜNCELLEMESİ (TARİH VE METRİKLER) ---
         st.markdown("---")
+        
+        # 1. Otomatik Tarih Bilgisini Ana Ekranda Göster
+        if s_tarih:
+            st.info(f"📅 **Analiz Edilen Rapor Dönemi:** {s_tarih} - {b_tarih} (Toplam {oto_gun_sayisi} Gün)")
+        else:
+            st.warning("⚠️ Rapor tarihleri otomatik okunamadı, hesaplamalar varsayılan 91 gün üzerinden yapılıyor.")
+
+        # 2. Özet Metrikler
         toplam_sevk_doz = int(df_f['Gonderilecek'].sum())
         ihtiyac_kurum_sayisi = df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique()
         
@@ -129,13 +142,16 @@ if tuketim_file and stok_file:
         with m2:
             st.metric("🏢 İhtiyaç Sahibi Kurum", ihtiyac_kurum_sayisi)
         with m3:
-            st.metric("📅 Planlama Süresi", f"{plan_suresi} Gün")
+            st.metric("⏳ Planlanan Stok Süresi", f"{plan_suresi} Gün")
+        
         st.markdown("---")
 
+        # Sekmeler
         tab1, tab2 = st.tabs(["🏢 Kurum Bazlı Plan", "📍 İlçe Bazlı Özet"])
 
         with tab1:
             f1 = df_f[df_f['Gonderilecek'] > 0].sort_values('Gonderilecek', ascending=False)
+            st.subheader("Kurum Bazlı Dağıtım Listesi")
             st.dataframe(f1, use_container_width=True)
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 Excel İndir", to_excel(f1), "kurum_plan.xlsx")
@@ -146,6 +162,7 @@ if tuketim_file and stok_file:
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
             f2 = df_i[df_i['Gonderilecek'] > 0].sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
+            st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
             st.dataframe(f2, use_container_width=True)
             c3, c4 = st.columns(2)
             with c3: st.download_button("📥 Excel (İlçe) İndir", to_excel(f2), "ilce_plan.xlsx")
@@ -154,4 +171,4 @@ if tuketim_file and stok_file:
     except Exception as e:
         st.error(f"Bir hata oluştu: {e}")
 else:
-    st.info("Lütfen dosyaları yükleyin.")
+    st.info("Lütfen hesaplama yapmak için her iki CSV dosyasını da yukarıdaki alanlara yükleyin.")
