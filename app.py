@@ -78,7 +78,6 @@ def to_pdf(df, title):
             pdf.cell(32, 7, val[:22], 1)
         pdf.ln()
     
-    # HATA ÇÖZÜMÜ: bytearray'i bytes formatına çeviriyoruz
     return bytes(pdf.output())
 
 # --- DOSYA YÜKLEME ALANI ---
@@ -91,13 +90,16 @@ with col_u2:
 # --- ANA PROGRAM ---
 if tuketim_file and stok_file:
     try:
+        # Tarih ve Gün Sayısı
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         if s_tarih:
             st.sidebar.info(f"📅 Rapor Dönemi: {s_tarih} - {b_tarih}\n({oto_gun_sayisi} Gün)")
 
+        # Dosyaları Oku
         df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='iso-8859-9')
         df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
         
+        # Temizlik ve Hazırlık
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
@@ -107,19 +109,35 @@ if tuketim_file and stok_file:
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
         
+        # Gruplama ve Birleştirme
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
         df_s = df_raw_s.groupby(['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
         res_df = pd.merge(df_c, df_s, left_on=['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'], right_on=['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'], how='outer').fillna(0)
         res_df = res_df[['ILÇE', 'BIRIM', 'ÜRÜN TANIMI', 'Tuketim', 'Stok']]
         res_df.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok']
 
+        # Hesaplama
         res_df['Ihtiyac'] = (((res_df['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
 
+        # --- FİLTRELEME BÖLÜMÜ ---
         st.sidebar.markdown("---")
+        st.sidebar.header("🔍 Filtreleme")
+        
+        # İlçe Filtresi
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
-        df_f = res_df[res_df['Ilce'].isin(sec_ilce)] if sec_ilce else res_df
+        
+        # Aşı Filtresi (EKLEDİM)
+        sec_asi = st.sidebar.multiselect("💉 Aşı Türü Filtrele", options=sorted(res_df['Urun'].unique()))
+        
+        # Filtreleri Uygula
+        df_f = res_df.copy()
+        if sec_ilce:
+            df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
+        if sec_asi:
+            df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
+        # Sekmeler
         tab1, tab2 = st.tabs(["🏢 Kurum Bazlı Plan", "📍 İlçe Bazlı Özet"])
 
         with tab1:
