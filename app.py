@@ -50,7 +50,6 @@ def tr_fix(text):
     """PDF için Türkçe karakterleri ve emojileri temizler."""
     if not isinstance(text, str):
         text = str(text)
-    # Emojileri temizle
     text = text.replace("🚨", "").replace("✅", "").replace("⚠️", "")
     rep = {"İ":"I","ı":"i","Ğ":"G","ğ":"g","Ş":"S","ş":"s","ç":"c","Ç":"C","ö":"o","Ö":"O","ü":"u","Ü":"U"}
     for k, v in rep.items():
@@ -170,17 +169,17 @@ if tuketim_file and stok_file:
             st.info(f"📅 **Rapor Dönemi:** {s_tarih} - {b_tarih} ({oto_gun_sayisi} Gün)")
 
         # Metrikler
-        toplam_sevk = int(df_f['Gonderilecek'].sum())
+        toplam_sevk = int(df_f[df_f['Gonderilecek'] > 0]['Gonderilecek'].sum())
         kritik_sayisi = len(df_f[df_f['Durum'] == "🚨 KRİTİK"])
         asiri_sayisi = len(df_f[df_f['Durum'] == "⚠️ AŞIRI"])
+        kurum_sayisi = df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique()
         
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("📦 SEVKİYAT (DOZ)", f"{toplam_sevk:,}".replace(",", "."))
         m2.metric("🚨 KRİTİK STOK", kritik_sayisi)
         m3.metric("⚠️ AŞIRI STOK", asiri_sayisi)
-        m4.metric("🏢 KURUM SAYISI", df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique())
+        m4.metric("🏢 KURUM SAYISI", kurum_sayisi)
 
-        # Sadece Kritik Uyarısı Kaldı (Aşırı detay kutusu kaldırıldı)
         if kritik_sayisi > 0:
             st.error(f"🚨 **KRİTİK UYARI:** {kritik_sayisi} birimde stok tükenmek üzere!")
         
@@ -189,33 +188,52 @@ if tuketim_file and stok_file:
         tab1, tab2 = st.tabs(["🏢 Kurum Bazlı Plan", "📍 İlçe Bazlı Özet"])
 
         with tab1:
-            # Sıralama: Kritik -> Aşırı -> Yeterli
-            durum_sirasi = {"🚨 KRİTİK": 0, "⚠️ AŞIRI": 1, "✅ Yeterli": 2}
-            df_f['sort_key'] = df_f['Durum'].map(durum_sirasi)
-            f1 = df_f.sort_values(['sort_key', 'Gonderilecek'], ascending=[True, False]).drop('sort_key', axis=1)
+            # 1. Ana Tablo: Sadece Gönderilecek > 0 olanlar
+            f1_visible = df_f[df_f['Gonderilecek'] > 0].copy()
+            
+            # Sıralama: Kritik -> Yeterli (Aşırı zaten 0 olduğu için burada yok)
+            durum_sirasi = {"🚨 KRİTİK": 0, "✅ Yeterli": 1, "⚠️ AŞIRI": 2}
+            f1_visible['sort_key'] = f1_visible['Durum'].map(durum_sirasi)
+            f1_visible = f1_visible.sort_values(['sort_key', 'Gonderilecek'], ascending=[True, False]).drop('sort_key', axis=1)
 
-            st.dataframe(f1[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek', 'Yetme_Suresi']], use_container_width=True)
+            st.dataframe(f1_visible[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek', 'Yetme_Suresi']], use_container_width=True)
             
             c1, c2 = st.columns(2)
             with c1:
-                st.download_button("📥 Excel İndir", to_excel(f1), "kurum_bazli_plan.xlsx")
+                st.download_button("📥 Excel İndir", to_excel(f1_visible), "kurum_bazli_plan.xlsx")
             with c2:
-                st.download_button("📥 PDF İndir", to_pdf(f1, "Kurum Bazli Dagitim Plani"), "kurum_bazli_plan.pdf")
+                st.download_button("📥 PDF İndir", to_pdf(f1_visible, "Kurum Bazli Dagitim Plani"), "kurum_bazli_plan.pdf")
+            
+            # --- YENİ EKLENEN KISIM: AŞIRI STOK LİSTESİ ---
+            if asiri_sayisi > 0:
+                st.markdown("---")
+                # Expander kullanarak açılır liste yapıyoruz
+                with st.expander(f"⚠️ AŞIRI STOK LİSTESİ ({asiri_sayisi} Kayıt) - Tıklayıp İnceleyin", expanded=False):
+                    st.warning(f"Aşağıdaki birimlerde **{asiri_esik} günden fazla** yetecek stok bulunmaktadır. İhtiyaç fazlasıdır.")
+                    # Aşırı stok olanları filtrele
+                    f1_asiri = df_f[df_f['Durum'] == "⚠️ AŞIRI"].copy()
+                    f1_asiri = f1_asiri.sort_values('Yetme_Suresi', ascending=False)
+                    # Sadece ilgili sütunları göster
+                    st.dataframe(f1_asiri[['Ilce', 'Birim', 'Urun', 'Stok', 'Yetme_Suresi']], use_container_width=True)
+
 
         with tab2:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
-            f2 = df_i.sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
+            
+            # Sadece Gönderilecek > 0 olanlar
+            f2_visible = df_i[df_i['Gonderilecek'] > 0].copy()
+            f2_visible = f2_visible.sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
             
             st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
-            st.dataframe(f2, use_container_width=True)
+            st.dataframe(f2_visible, use_container_width=True)
             
             c3, c4 = st.columns(2)
             with c3:
-                st.download_button("📥 Excel (İlçe) İndir", to_excel(f2), "ilce_bazli_ozet.xlsx")
+                st.download_button("📥 Excel (İlçe) İndir", to_excel(f2_visible), "ilce_bazli_ozet.xlsx")
             with c4:
-                st.download_button("📥 PDF (İlçe) İndir", to_pdf(f2, "Ilce Bazli Toplam Asi Ihtiyaci"), "ilce_bazli_ozet.pdf")
+                st.download_button("📥 PDF (İlçe) İndir", to_pdf(f2_visible, "Ilce Bazli Toplam Asi Ihtiyaci"), "ilce_bazli_ozet.pdf")
 
     except Exception as e:
         st.error(f"Hata: {e}")
