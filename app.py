@@ -166,8 +166,10 @@ if tuketim_file and stok_file:
 
         # --- ANA EKRAN GÖRÜNÜMÜ ---
         st.markdown("---")
+        
+        # --- İSTENEN DEĞİŞİKLİK BURADA YAPILDI ---
         if s_tarih:
-            st.info(f"📅 **Rapor Dönemi:** {s_tarih} - {b_tarih} ({oto_gun_sayisi} Gün)")
+            st.info(f"📅 **Dönemsel Tüketim Raporu:** {s_tarih} - {b_tarih} ({oto_gun_sayisi} Gün)")
 
         # Metrikler
         toplam_sevk = int(df_f[df_f['Gonderilecek'] > 0]['Gonderilecek'].sum())
@@ -180,8 +182,6 @@ if tuketim_file and stok_file:
         m2.metric("🚨 KRİTİK STOK", kritik_sayisi)
         m3.metric("⚠️ AŞIRI STOK", asiri_sayisi)
         m4.metric("🏢 KURUM SAYISI", kurum_sayisi)
-
-        # UYARI ÇUBUĞU KALDIRILDI - Artık sadece metriklerde görünüyor.
         
         st.markdown("---")
 
