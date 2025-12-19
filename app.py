@@ -91,12 +91,12 @@ with c1:
 with c2:
     asiri_esik = st.number_input("Aşırı (Gün)", value=60)
 
-# --- DOSYA YÜKLEME ALANI ---
+# --- DOSYA YÜKLEME ALANI (GÜNCELLENDİ) ---
 col_u1, col_u2 = st.columns(2)
 with col_u1:
-    tuketim_file = st.file_uploader("📂 1. Tüketim Raporu (CSV)", type=["csv"])
+    tuketim_file = st.file_uploader("📂 Dönemsel Tüketim Raporu (CSV)", type=["csv"])
 with col_u2:
-    stok_file = st.file_uploader("📂 2. Stok Raporu (CSV)", type=["csv"])
+    stok_file = st.file_uploader("📂 Stok Durum Raporu Birim Bazında (CSV)", type=["csv"])
 
 # --- ANA PROGRAM ---
 if tuketim_file and stok_file:
@@ -120,29 +120,23 @@ if tuketim_file and stok_file:
             stok_file.seek(0)
             df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
         
-        # Sütun isimlerini boşluklardan temizle
+        # Sütun isimlerini temizle
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
 
         # --- AKILLI SÜTUN ONARICI ---
-        # Dosya kodlamasından kaynaklı bozuk karakterleri (ILÃÇE vb.) düzeltir
         def smart_fix_columns(df):
             rename_map = {}
             for col in df.columns:
                 col_upper = col.upper()
-                # ILÇE Tespiti (IL ile başlayıp E ile bitenler)
                 if col_upper.startswith('IL') and col_upper.endswith('E'): 
                     rename_map[col] = 'ILÇE'
-                # BIRIM ADI Tespiti
                 elif 'BIRIM' in col_upper and 'ADI' in col_upper:
                     rename_map[col] = 'BIRIM ADI'
-                # BIRIM TIPI Tespiti
                 elif 'BIRIM' in col_upper and 'TIPI' in col_upper:
                     rename_map[col] = 'BIRIM TIPI'
-                # ÜRÜN TANIMI Tespiti
                 elif 'TAN' in col_upper and 'IMI' in col_upper:
                     rename_map[col] = 'ÜRÜN TANIMI'
-                # TOPLAM DOZ Tespiti
                 elif 'TOPLAM' in col_upper and 'DOZ' in col_upper:
                     rename_map[col] = 'TOPLAM DOZ'
             
@@ -151,14 +145,11 @@ if tuketim_file and stok_file:
             return df
 
         df_raw_s = smart_fix_columns(df_raw_s)
-        # Tüketim dosyasında da ILÇE düzeltmesi gerekebilir
         df_raw_t = smart_fix_columns(df_raw_t)
 
-        # Eksik veri doldurma
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
         df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']].ffill()
         
-        # Sayısal çevirim
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
@@ -171,7 +162,6 @@ if tuketim_file and stok_file:
         df_ana_depo_stok = df_raw_s[is_ana_depo].copy()
         df_stok_hesaplama = df_raw_s[~is_ana_depo].copy()
         
-        # Veri Birleştirme
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim']
         
