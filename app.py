@@ -103,11 +103,28 @@ if tuketim_file and stok_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
-        df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='iso-8859-9')
-        df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
+        # --- CSV OKUMA (GÜNCELLENDİ) ---
+        # 1. Tüketim Dosyası
+        try:
+            df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='utf-8')
+        except UnicodeDecodeError:
+            df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='iso-8859-9')
+            
+        # 2. Stok Dosyası (Hata alınan kısım burasıydı)
+        try:
+            df_raw_s = pd.read_csv(stok_file, header=3, encoding='utf-8')
+        except UnicodeDecodeError:
+            df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
         
+        # Sütun isimlerini temizle
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
+        
+        # Sütun kontrolü ve hata önleme (Dosya yapısı farklıysa kullanıcıyı uyar)
+        if 'ILÇE' not in df_raw_s.columns and 'ILÃ\x87E' in df_raw_s.columns:
+             # Encoding hatası varsa düzeltmeyi dene
+             df_raw_s.rename(columns={'ILÃ\x87E': 'ILÇE', 'Ã\x9cRÃ\x9cN TANIMI': 'ÜRÜN TANIMI'}, inplace=True)
+
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
         df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']].ffill()
         
@@ -115,7 +132,8 @@ if tuketim_file and stok_file:
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
 
-        # --- ANA DEPO AYRIŞTIRMA ---
+        # --- ANA DEPO AYRIŞTIRMA (GÜNCELLENMİŞ EŞLEŞTİRME MANTIĞI) ---
+        # "İ" ve "I" harfi farklılıklarını aşmak için 'contains' ve 'case=False' kullanıyoruz
         is_ana_depo = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
                       (df_raw_s['BIRIM ADI'].str.contains('ISTANBUL ISM', case=False, na=False)) & \
                       (df_raw_s['BIRIM TIPI'].str.contains('ISM', case=False, na=False))
@@ -164,10 +182,8 @@ if tuketim_file and stok_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- ANA EKRAN GÖRÜNÜMÜ ---
+        # --- ANA EKRAN ---
         st.markdown("---")
-        
-        # --- İSTENEN DEĞİŞİKLİK BURADA YAPILDI ---
         if s_tarih:
             st.info(f"📅 **Dönemsel Tüketim Raporu:** {s_tarih} - {b_tarih} ({oto_gun_sayisi} Gün)")
 
@@ -182,10 +198,9 @@ if tuketim_file and stok_file:
         m2.metric("🚨 KRİTİK STOK", kritik_sayisi)
         m3.metric("⚠️ AŞIRI STOK", asiri_sayisi)
         m4.metric("🏢 KURUM SAYISI", kurum_sayisi)
-        
+
         st.markdown("---")
 
-        # 3 SEKMELİ YAPI
         tab1, tab2, tab3 = st.tabs(["📦 Sevkiyat Planı", "⚠️ Fazla Stok Yönetimi", "📍 İlçe Bazlı Özet"])
 
         with tab1:
