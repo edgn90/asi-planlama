@@ -5,7 +5,7 @@ from datetime import datetime
 import io
 from fpdf import FPDF
 
-# --- SAYFA AYARLARI (Layout 'wide' kalsın, geniş ekran iyidir) ---
+# --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
 
 st.title("💉 Akıllı Aşı Talep Tahmini ve Stok Yönetim Paneli")
@@ -80,21 +80,18 @@ def to_pdf(df, title):
     return bytes(pdf.output())
 
 # --- YAN MENÜ: KOMPAKT AYARLAR ---
-# Başlıkları küçülttük ve boşlukları azalttık
 st.sidebar.markdown("### ⚙️ Ayarlar")
 
-# 1. Planlama Slider'ları (Alt alta ama sıkışık)
 plan_suresi = st.sidebar.slider("Plan Süresi (Gün)", 7, 90, 15)
 guvenlik_marji = st.sidebar.slider("Güvenlik Payı (%)", 0, 100, 20) / 100
 
-# 2. Durum Eşikleri (Yan Yana / Columns kullanarak yer kazanma)
 c1, c2 = st.sidebar.columns(2)
 with c1:
     kritik_esik = st.number_input("Kritik (Gün)", value=3)
 with c2:
     asiri_esik = st.number_input("Aşırı (Gün)", value=60)
 
-# --- DOSYA YÜKLEME ALANI (ANA EKRAN) ---
+# --- DOSYA YÜKLEME ALANI ---
 col_u1, col_u2 = st.columns(2)
 with col_u1:
     tuketim_file = st.file_uploader("📂 1. Tüketim Raporu (CSV)", type=["csv"])
@@ -152,12 +149,10 @@ if tuketim_file and stok_file:
 
         res_df['Durum'] = res_df.apply(get_durum, axis=1)
 
-        # --- YAN MENÜ: FİLTRELER (DEVAM) ---
-        # Filtreleri ayarların hemen altına, çizgisiz ekliyoruz
+        # --- YAN MENÜ: FİLTRELER ---
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
         sec_asi = st.sidebar.multiselect("💉 Aşı Filtrele", options=sorted(res_df['Urun'].unique()))
         
-        # Ana Depo (En altta, expander içinde)
         with st.sidebar.expander("🚚 ANA DEPO (İSM)", expanded=False):
             if not df_ana_depo_stok.empty:
                 st.dataframe(df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']], hide_index=True)
@@ -186,8 +181,7 @@ if tuketim_file and stok_file:
         m3.metric("⚠️ AŞIRI STOK", asiri_sayisi)
         m4.metric("🏢 KURUM SAYISI", kurum_sayisi)
 
-        if kritik_sayisi > 0:
-            st.error(f"🚨 **KRİTİK UYARI:** {kritik_sayisi} birimde stok tükenmek üzere!")
+        # UYARI ÇUBUĞU KALDIRILDI - Artık sadece metriklerde görünüyor.
         
         st.markdown("---")
 
