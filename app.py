@@ -50,7 +50,8 @@ def tr_fix(text):
     """PDF için Türkçe karakterleri ve emojileri temizler."""
     if not isinstance(text, str):
         text = str(text)
-    text = text.replace("🚨", "").replace("✅", "")
+    # Emojileri temizle (🚨, ✅, ⚠️ vb.)
+    text = text.replace("🚨", "").replace("✅", "").replace("⚠️", "")
     rep = {"İ":"I","ı":"i","Ğ":"G","ğ":"g","Ş":"S","ş":"s","ç":"c","Ç":"C","ö":"o","Ö":"O","ü":"u","Ü":"U"}
     for k, v in rep.items():
         text = text.replace(k, v)
@@ -65,7 +66,6 @@ def to_pdf(df, title):
     
     pdf.set_font("Helvetica", "B", 8)
     cols = df.columns.tolist()
-    # Kolon genişliği hesaplama (Daha esnek bir görünüm için)
     col_width = 190 / len(cols)
     
     for col in cols:
@@ -85,7 +85,11 @@ def to_pdf(df, title):
 st.sidebar.header("⚙️ Planlama Parametreleri")
 plan_suresi = st.sidebar.slider("Planlanacak Süre (Gün)", 7, 90, 15)
 guvenlik_marji = st.sidebar.slider("Güvenlik Stoğu (%)", 0, 100, 20) / 100
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🚦 Durum Ayarları")
 kritik_esik = st.sidebar.number_input("Kritik Stok Eşiği (Gün)", value=3)
+asiri_esik = st.sidebar.number_input("Aşırı Stok Eşiği (Gün)", value=60, help="Bu gün sayısından fazla stoğu olan ASM'ler 'Aşırı' olarak işaretlenir.")
 
 # --- DOSYA YÜKLEME ALANI ---
 col_u1, col_u2 = st.columns(2)
@@ -121,18 +125,39 @@ if tuketim_file and stok_file:
         
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim']
-        df_s = df_stok_hesaplama.groupby(['ILÇE', 'BIRIM ADI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
-        df_s.columns = ['Ilce', 'Birim', 'Urun', 'Stok']
+        
+        # Stok verisinde 'BIRIM TIPI'ni de koruyarak grupluyoruz (Aşırı stok kontrolü için gerekli)
+        df_s = df_stok_hesaplama.groupby(['ILÇE', 'BIRIM ADI', 'BIRIM TIPI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
+        df_s.columns = ['Ilce', 'Birim', 'Tip', 'Urun', 'Stok']
         
         res_df = pd.merge(df_c, df_s, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
+        # Eğer Consumption'da olup Stock'ta olmayan varsa Tip '0' gelir, bunu 'Bilinmiyor' yapabiliriz veya boş bırakırız.
         
         # Hesaplama
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
-        
         res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
-        res_df['Durum'] = res_df['Yetme_Suresi'].apply(lambda x: "🚨 KRİTİK" if x < kritik_esik else "✅ Yeterli")
+
+        # --- DURUM MANTIĞI (GÜNCELLENMİŞ) ---
+        def get_durum(row):
+            # 1. Kritik Kontrolü
+            if row['Yetme_Suresi'] < kritik_esik:
+                return "🚨 KRİTİK"
+            
+            # 2. Aşırı Stok Kontrolü (Sadece ASM ve Son Kullanıcı için)
+            # Tip kolonunu güvenli stringe çevir ve büyük harf yap
+            tip_str = str(row['Tip']).upper()
+            target_units = ['ASM', 'SON KULLANICI', 'SON KULLANICI'] # Genişletilebilir
+            
+            # Eğer süre eşikten büyükse VE birim tipi hedef birimlerden birini içeriyorsa
+            if row['Yetme_Suresi'] > asiri_esik:
+                if any(x in tip_str for x in ['ASM', 'SON KULLANICI']):
+                    return "⚠️ AŞIRI"
+            
+            return "✅ Yeterli"
+
+        res_df['Durum'] = res_df.apply(get_durum, axis=1)
 
         # --- YAN MENÜ: FİLTRELER VE DEPO ---
         st.sidebar.markdown("---")
@@ -155,22 +180,37 @@ if tuketim_file and stok_file:
         # Metrikler
         toplam_sevk = int(df_f['Gonderilecek'].sum())
         kritik_sayisi = len(df_f[df_f['Durum'] == "🚨 KRİTİK"])
+        asiri_sayisi = len(df_f[df_f['Durum'] == "⚠️ AŞIRI"])
         
-        m1, m2, m3 = st.columns(3)
-        m1.metric("📦 TOPLAM SEVKİYAT (DOZ)", f"{toplam_sevk:,}".replace(",", "."))
-        m2.metric("🚨 KRİTİK STOK SAYISI", kritik_sayisi)
-        m3.metric("🏢 KURUM SAYISI", df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique())
+        m1, m2, m3, m4 = st.columns(4) # 4 Kolona çıkardık
+        m1.metric("📦 SEVKİYAT (DOZ)", f"{toplam_sevk:,}".replace(",", "."))
+        m2.metric("🚨 KRİTİK STOK", kritik_sayisi)
+        m3.metric("⚠️ AŞIRI STOK", asiri_sayisi)
+        m4.metric("🏢 KURUM SAYISI", df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique())
 
+        # Uyarı Panelleri
         if kritik_sayisi > 0:
-            st.error(f"⚠️ **Kritik Eşik Uyarısı:** Stoğu {kritik_esik} günden az kalan {kritik_sayisi} birim tespit edildi.")
+            st.error(f"🚨 **KRİTİK UYARI:** {kritik_sayisi} birimde stok tükenmek üzere!")
+        
+        if asiri_sayisi > 0:
+            with st.expander(f"⚠️ **AŞIRI STOK UYARISI ({asiri_sayisi} Kayıt)** - Tıklayıp Listeyi Gör", expanded=False):
+                st.warning(f"Aşağıdaki ASM veya Son Kullanıcı birimlerinde {asiri_esik} günden fazla stok var. İade veya transfer düşünülebilir.")
+                asiri_liste = df_f[df_f['Durum'] == "⚠️ AŞIRI"].sort_values('Yetme_Suresi', ascending=False)
+                st.dataframe(asiri_liste[['Ilce', 'Birim', 'Urun', 'Stok', 'Yetme_Suresi', 'Durum']], use_container_width=True)
 
         st.markdown("---")
 
         tab1, tab2 = st.tabs(["🏢 Kurum Bazlı Plan", "📍 İlçe Bazlı Özet"])
 
         with tab1:
-            f1 = df_f[df_f['Gonderilecek'] > 0].sort_values(['Durum', 'Gonderilecek'], ascending=[False, False])
-            st.dataframe(f1[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek']], use_container_width=True)
+            # Sıralama: Önce Kritikler, Sonra Aşırılar, Sonra Yeterliler
+            f1 = df_f.sort_values(['Durum', 'Gonderilecek'], ascending=[True, False]) # Alfabetik: Kritik(🚨) < Yeterli(✅) < Aşırı(⚠️) - Emoji sırası değişebilir, o yüzden özel sıralama yapılabilir ama bu haliyle de gruplu durur.
+            # Daha iyi sıralama için manuel kodlama
+            durum_sirasi = {"🚨 KRİTİK": 0, "⚠️ AŞIRI": 1, "✅ Yeterli": 2}
+            f1['sort_key'] = f1['Durum'].map(durum_sirasi)
+            f1 = f1.sort_values(['sort_key', 'Gonderilecek'], ascending=[True, False]).drop('sort_key', axis=1)
+
+            st.dataframe(f1[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek', 'Yetme_Suresi']], use_container_width=True)
             
             c1, c2 = st.columns(2)
             with c1:
@@ -182,12 +222,11 @@ if tuketim_file and stok_file:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
-            f2 = df_i[df_i['Gonderilecek'] > 0].sort_values('Gonderilecek', ascending=False)
+            f2 = df_i.sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
             
             st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
             st.dataframe(f2, use_container_width=True)
             
-            # İHTİYAÇ DUYDUĞUNUZ EKLEME: İLÇE BAZLI İNDİRME BUTONLARI
             c3, c4 = st.columns(2)
             with c3:
                 st.download_button("📥 Excel (İlçe) İndir", to_excel(f2), "ilce_bazli_ozet.xlsx")
