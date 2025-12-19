@@ -103,42 +103,62 @@ if tuketim_file and stok_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
-        # --- CSV OKUMA (HATA DÜZELTİLDİ: seek(0) EKLENDİ) ---
+        # --- CSV OKUMA VE HATA YÖNETİMİ ---
         # 1. Tüketim Dosyası
         try:
-            tuketim_file.seek(0) # Dosyayı başa sar
+            tuketim_file.seek(0)
             df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='utf-8')
-        except Exception: # Genel hata yakalama, encoding veya parse hatası olabilir
-            tuketim_file.seek(0) # Hata alınca tekrar başa sar
+        except Exception:
+            tuketim_file.seek(0)
             df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='iso-8859-9')
             
         # 2. Stok Dosyası
         try:
-            stok_file.seek(0) # Dosyayı başa sar
+            stok_file.seek(0)
             df_raw_s = pd.read_csv(stok_file, header=3, encoding='utf-8')
         except Exception:
-            stok_file.seek(0) # Hata alınca tekrar başa sar
+            stok_file.seek(0)
             df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
         
-        # Sütun isimlerini temizle
+        # Sütun isimlerini boşluklardan temizle
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
 
-        # İlçe sütun adını standartlaştır (bazı dosyalarda karakter sorunu olabiliyor)
-        if 'ILÇE' not in df_raw_s.columns:
-            # Olası bozuk karakterli sütunları kontrol et
-            cols = df_raw_s.columns
-            for col in cols:
-                if 'L' in col and 'E' in col and len(col) < 6: # ILÃÇE gibi bozukluklar için basit kontrol
-                    df_raw_s.rename(columns={col: 'ILÇE'}, inplace=True)
-            if 'ÜRÜN TANIMI' not in df_raw_s.columns:
-                 for col in cols:
-                    if 'R' in col and 'N' in col and 'TAN' in col:
-                        df_raw_s.rename(columns={col: 'ÜRÜN TANIMI'}, inplace=True)
-        
+        # --- AKILLI SÜTUN ONARICI ---
+        # Dosya kodlamasından kaynaklı bozuk karakterleri (ILÃÇE vb.) düzeltir
+        def smart_fix_columns(df):
+            rename_map = {}
+            for col in df.columns:
+                col_upper = col.upper()
+                # ILÇE Tespiti (IL ile başlayıp E ile bitenler)
+                if col_upper.startswith('IL') and col_upper.endswith('E'): 
+                    rename_map[col] = 'ILÇE'
+                # BIRIM ADI Tespiti
+                elif 'BIRIM' in col_upper and 'ADI' in col_upper:
+                    rename_map[col] = 'BIRIM ADI'
+                # BIRIM TIPI Tespiti
+                elif 'BIRIM' in col_upper and 'TIPI' in col_upper:
+                    rename_map[col] = 'BIRIM TIPI'
+                # ÜRÜN TANIMI Tespiti
+                elif 'TAN' in col_upper and 'IMI' in col_upper:
+                    rename_map[col] = 'ÜRÜN TANIMI'
+                # TOPLAM DOZ Tespiti
+                elif 'TOPLAM' in col_upper and 'DOZ' in col_upper:
+                    rename_map[col] = 'TOPLAM DOZ'
+            
+            if rename_map:
+                df.rename(columns=rename_map, inplace=True)
+            return df
+
+        df_raw_s = smart_fix_columns(df_raw_s)
+        # Tüketim dosyasında da ILÇE düzeltmesi gerekebilir
+        df_raw_t = smart_fix_columns(df_raw_t)
+
+        # Eksik veri doldurma
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
         df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']].ffill()
         
+        # Sayısal çevirim
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
@@ -151,6 +171,7 @@ if tuketim_file and stok_file:
         df_ana_depo_stok = df_raw_s[is_ana_depo].copy()
         df_stok_hesaplama = df_raw_s[~is_ana_depo].copy()
         
+        # Veri Birleştirme
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim']
         
