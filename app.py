@@ -5,7 +5,7 @@ from datetime import datetime
 import io
 from fpdf import FPDF
 
-# --- SAYFA AYARLARI ---
+# --- SAYFA AYARLARI (Layout 'wide' kalsın, geniş ekran iyidir) ---
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
 
 st.title("💉 Akıllı Aşı Talep Tahmini ve Stok Yönetim Paneli")
@@ -47,10 +47,8 @@ def to_excel(df):
     return output.getvalue()
 
 def tr_fix(text):
-    """PDF için Türkçe karakterleri ve emojileri temizler."""
     if not isinstance(text, str):
         text = str(text)
-    # Emojileri temizle
     text = text.replace("🚨", "").replace("✅", "").replace("⚠️", "")
     rep = {"İ":"I","ı":"i","Ğ":"G","ğ":"g","Ş":"S","ş":"s","ç":"c","Ç":"C","ö":"o","Ö":"O","ü":"u","Ü":"U"}
     for k, v in rep.items():
@@ -81,22 +79,27 @@ def to_pdf(df, title):
     
     return bytes(pdf.output())
 
-# --- YAN MENÜ (AYARLAR) ---
-st.sidebar.header("⚙️ Planlama Parametreleri")
-plan_suresi = st.sidebar.slider("Planlanacak Süre (Gün)", 7, 90, 15)
-guvenlik_marji = st.sidebar.slider("Güvenlik Stoğu (%)", 0, 100, 20) / 100
+# --- YAN MENÜ: KOMPAKT AYARLAR ---
+# Başlıkları küçülttük ve boşlukları azalttık
+st.sidebar.markdown("### ⚙️ Ayarlar")
 
-st.sidebar.markdown("---")
-st.sidebar.subheader("🚦 Durum Ayarları")
-kritik_esik = st.sidebar.number_input("Kritik Stok Eşiği (Gün)", value=3)
-asiri_esik = st.sidebar.number_input("Aşırı Stok Eşiği (Gün)", value=60, help="Bu gün sayısından fazla stoğu olan ASM'ler 'Aşırı' olarak işaretlenir.")
+# 1. Planlama Slider'ları (Alt alta ama sıkışık)
+plan_suresi = st.sidebar.slider("Plan Süresi (Gün)", 7, 90, 15)
+guvenlik_marji = st.sidebar.slider("Güvenlik Payı (%)", 0, 100, 20) / 100
 
-# --- DOSYA YÜKLEME ALANI ---
+# 2. Durum Eşikleri (Yan Yana / Columns kullanarak yer kazanma)
+c1, c2 = st.sidebar.columns(2)
+with c1:
+    kritik_esik = st.number_input("Kritik (Gün)", value=3)
+with c2:
+    asiri_esik = st.number_input("Aşırı (Gün)", value=60)
+
+# --- DOSYA YÜKLEME ALANI (ANA EKRAN) ---
 col_u1, col_u2 = st.columns(2)
 with col_u1:
-    tuketim_file = st.file_uploader("📂 1. Dönemsel Tüketim Raporu (CSV)", type=["csv"])
+    tuketim_file = st.file_uploader("📂 1. Tüketim Raporu (CSV)", type=["csv"])
 with col_u2:
-    stok_file = st.file_uploader("📂 2. İl Genel Stok Raporu (CSV)", type=["csv"])
+    stok_file = st.file_uploader("📂 2. Stok Raporu (CSV)", type=["csv"])
 
 # --- ANA PROGRAM ---
 if tuketim_file and stok_file:
@@ -137,34 +140,36 @@ if tuketim_file and stok_file:
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
         res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
 
-        # --- DURUM MANTIĞI ---
+        # Durum Belirleme
         def get_durum(row):
             if row['Yetme_Suresi'] < kritik_esik:
                 return "🚨 KRİTİK"
-            
             tip_str = str(row['Tip']).upper()
             if row['Yetme_Suresi'] > asiri_esik:
                 if any(x in tip_str for x in ['ASM', 'SON KULLANICI']):
                     return "⚠️ AŞIRI"
-            
             return "✅ Yeterli"
 
         res_df['Durum'] = res_df.apply(get_durum, axis=1)
 
-        # --- YAN MENÜ: FİLTRELER VE DEPO ---
-        st.sidebar.markdown("---")
-        sec_ilce = st.sidebar.multiselect("📍 İlçe Seçin", options=sorted(res_df['Ilce'].unique()))
-        sec_asi = st.sidebar.multiselect("💉 Aşı Türü Seçin", options=sorted(res_df['Urun'].unique()))
+        # --- YAN MENÜ: FİLTRELER (DEVAM) ---
+        # Filtreleri ayarların hemen altına, çizgisiz ekliyoruz
+        sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
+        sec_asi = st.sidebar.multiselect("💉 Aşı Filtrele", options=sorted(res_df['Urun'].unique()))
         
-        st.sidebar.markdown("---")
-        with st.sidebar.expander("🚚 İL ANA DEPO STOKLARI", expanded=False):
-            st.dataframe(df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']], hide_index=True)
+        # Ana Depo (En altta, expander içinde)
+        with st.sidebar.expander("🚚 ANA DEPO (İSM)", expanded=False):
+            if not df_ana_depo_stok.empty:
+                st.dataframe(df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']], hide_index=True)
+            else:
+                st.write("Veri yok.")
 
-        # --- ANA EKRAN ---
+        # --- FİLTRE UYGULAMA ---
         df_f = res_df.copy()
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
+        # --- ANA EKRAN GÖRÜNÜMÜ ---
         st.markdown("---")
         if s_tarih:
             st.info(f"📅 **Rapor Dönemi:** {s_tarih} - {b_tarih} ({oto_gun_sayisi} Gün)")
@@ -186,60 +191,40 @@ if tuketim_file and stok_file:
         
         st.markdown("---")
 
-        # --- YENİ 3 SEKMELİ YAPI ---
+        # 3 SEKMELİ YAPI
         tab1, tab2, tab3 = st.tabs(["📦 Sevkiyat Planı", "⚠️ Fazla Stok Yönetimi", "📍 İlçe Bazlı Özet"])
 
-        # SEKME 1: SEVKİYAT PLANI (Sadece İhtiyaç > 0 olanlar)
         with tab1:
             st.caption("Aşağıdaki liste sadece aşı gönderilmesi gereken (İhtiyaç > 0) kurumları içerir.")
-            
             f1_sevk = df_f[df_f['Gonderilecek'] > 0].copy()
-            # Sıralama: Kritik -> Yeterli
             durum_sirasi = {"🚨 KRİTİK": 0, "✅ Yeterli": 1, "⚠️ AŞIRI": 2}
             f1_sevk['sort_key'] = f1_sevk['Durum'].map(durum_sirasi)
             f1_sevk = f1_sevk.sort_values(['sort_key', 'Gonderilecek'], ascending=[True, False]).drop('sort_key', axis=1)
 
             st.dataframe(f1_sevk[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek', 'Yetme_Suresi']], use_container_width=True)
-            
             c1, c2 = st.columns(2)
-            with c1:
-                st.download_button("📥 Sevkiyat Excel", to_excel(f1_sevk), "sevkiyat_plani.xlsx")
-            with c2:
-                st.download_button("📥 Sevkiyat PDF", to_pdf(f1_sevk, "Sevkiyat Plani"), "sevkiyat_plani.pdf")
+            with c1: st.download_button("📥 Sevkiyat Excel", to_excel(f1_sevk), "sevkiyat_plani.xlsx")
+            with c2: st.download_button("📥 Sevkiyat PDF", to_pdf(f1_sevk, "Sevkiyat Plani"), "sevkiyat_plani.pdf")
 
-        # SEKME 2: FAZLA STOK YÖNETİMİ (Sadece Aşırı Olanlar)
         with tab2:
             st.caption(f"Aşağıdaki liste, {asiri_esik} günden fazla stoğu bulunan ve 'Aşırı' olarak işaretlenen kurumları içerir.")
-            
-            f1_asiri = df_f[df_f['Durum'] == "⚠️ AŞIRI"].copy()
-            f1_asiri = f1_asiri.sort_values('Yetme_Suresi', ascending=False)
-            
+            f1_asiri = df_f[df_f['Durum'] == "⚠️ AŞIRI"].copy().sort_values('Yetme_Suresi', ascending=False)
             st.dataframe(f1_asiri[['Ilce', 'Birim', 'Urun', 'Stok', 'Yetme_Suresi']], use_container_width=True)
-            
             c3, c4 = st.columns(2)
-            with c3:
-                st.download_button("📥 İade/Devir Excel", to_excel(f1_asiri), "asiri_stok_listesi.xlsx")
-            with c4:
-                st.download_button("📥 İade/Devir PDF", to_pdf(f1_asiri, "Asiri Stok Listesi"), "asiri_stok_listesi.pdf")
+            with c3: st.download_button("📥 İade Excel", to_excel(f1_asiri), "asiri_stok.xlsx")
+            with c4: st.download_button("📥 İade PDF", to_pdf(f1_asiri, "Asiri Stok"), "asiri_stok.pdf")
 
-        # SEKME 3: İLÇE BAZLI ÖZET
         with tab3:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
-            
-            # Sadece Gönderilecek > 0 olanlar
-            f2_visible = df_i[df_i['Gonderilecek'] > 0].copy()
-            f2_visible = f2_visible.sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
+            f2_visible = df_i[df_i['Gonderilecek'] > 0].copy().sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
             
             st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
             st.dataframe(f2_visible, use_container_width=True)
-            
             c5, c6 = st.columns(2)
-            with c5:
-                st.download_button("📥 İlçe Özet Excel", to_excel(f2_visible), "ilce_ozet.xlsx")
-            with c6:
-                st.download_button("📥 İlçe Özet PDF", to_pdf(f2_visible, "Ilce Bazli Ozet"), "ilce_ozet.pdf")
+            with c5: st.download_button("📥 İlçe Excel", to_excel(f2_visible), "ilce_ozet.xlsx")
+            with c6: st.download_button("📥 İlçe PDF", to_pdf(f2_visible, "Ilce Ozet"), "ilce_ozet.pdf")
 
     except Exception as e:
         st.error(f"Hata: {e}")
