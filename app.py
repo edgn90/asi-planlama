@@ -118,16 +118,21 @@ if tuketim_file and stok_file:
             stok_file.seek(0)
             df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
         
-        # Temizlik
+        # Temizlik (Boşlukları sil)
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
 
-        # Akıllı Sütun Onarıcı
+        # --- AKILLI SÜTUN ONARICI (HATA BURADA DÜZELTİLDİ) ---
         def smart_fix_columns(df):
             rename_map = {}
             for col in df.columns:
                 col_upper = col.upper()
-                if col_upper.startswith('IL') and col_upper.endswith('E'): 
+                
+                # ZAYI SÜTUNU: Öncelikli tespit edilmeli
+                if 'ZAYI' in col_upper:
+                    rename_map[col] = 'ZAYI'
+                
+                elif col_upper.startswith('IL') and col_upper.endswith('E'): 
                     rename_map[col] = 'ILÇE'
                 elif 'BIRIM' in col_upper and 'ADI' in col_upper:
                     rename_map[col] = 'BIRIM ADI'
@@ -135,8 +140,11 @@ if tuketim_file and stok_file:
                     rename_map[col] = 'BIRIM TIPI'
                 elif 'TAN' in col_upper and 'IMI' in col_upper:
                     rename_map[col] = 'ÜRÜN TANIMI'
-                elif 'TOPLAM' in col_upper and 'DOZ' in col_upper and 'UYGULANAN' not in col_upper: # Stoktaki doz
+                
+                # TOPLAM DOZ: "ZAYI" içermemeli! (Eski hata buydu)
+                elif 'TOPLAM' in col_upper and 'DOZ' in col_upper and 'UYGULANAN' not in col_upper and 'ZAYI' not in col_upper:
                     rename_map[col] = 'TOPLAM DOZ'
+            
             if rename_map:
                 df.rename(columns=rename_map, inplace=True)
             return df
@@ -144,13 +152,6 @@ if tuketim_file and stok_file:
         df_raw_s = smart_fix_columns(df_raw_s)
         df_raw_t = smart_fix_columns(df_raw_t)
 
-        # Zayi Sütununu Bulma (İsmi çok uzun olduğu için arama ile buluyoruz)
-        zayi_col = None
-        for col in df_raw_t.columns:
-            if "ZAYI" in col.upper() and "TOPLAMI" in col.upper():
-                zayi_col = col
-                break
-        
         # Veri Doldurma
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
         df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']].ffill()
@@ -158,8 +159,9 @@ if tuketim_file and stok_file:
         # Sayısal Dönüşümler
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         
-        if zayi_col:
-            df_raw_t['Zayi'] = pd.to_numeric(df_raw_t[zayi_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
+        # Zayi Verisini Standart Sütundan Al
+        if 'ZAYI' in df_raw_t.columns:
+            df_raw_t['Zayi'] = pd.to_numeric(df_raw_t['ZAYI'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         else:
             df_raw_t['Zayi'] = 0
 
@@ -174,8 +176,7 @@ if tuketim_file and stok_file:
         df_ana_depo_stok = df_raw_s[is_ana_depo].copy()
         df_stok_hesaplama = df_raw_s[~is_ana_depo].copy()
         
-        # Gruplamalar
-        # Tüketim tablosunda Zayi de toplanmalı
+        # Gruplamalar (Zayi dahil)
         df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Zayi']
         
@@ -229,7 +230,7 @@ if tuketim_file and stok_file:
         
         st.markdown("---")
 
-        # --- 5 SEKMELİ YAPI (YENİ SEKME EKLENDİ) ---
+        # --- 5 SEKMELİ YAPI ---
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "📦 Sevkiyat Planı", 
             "⚠️ Fazla Stok Yönetimi", 
@@ -323,18 +324,17 @@ if tuketim_file and stok_file:
             with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
             with c8: st.download_button("📥 İl Geneli PDF", to_pdf(df_genel, "Il Geneli Stok ve Tuketim"), "il_geneli_ozet.pdf")
 
-        # --- YENİ EKLENEN 5. SEKME: ZAYİ VE VERİMLİLİK ANALİZİ ---
+        # --- 5. SEKME: ZAYİ VE VERİMLİLİK ANALİZİ (DÜZELTİLMİŞ) ---
         with tab5:
             st.subheader("📉 Zayi ve Verimlilik Analizi")
-            st.caption("Bu veriler tüketim raporundaki 'Zayi/Fire/İmha' sütunundan hesaplanmıştır.")
+            st.caption("Bu analiz tüketim raporundaki 'Zayi/Fire' verileri kullanılarak oluşturulmuştur.")
 
-            # Filtrelenmiş veri üzerinden analiz (Seçili ilçe ve aşıya göre)
-            # Ancak genel tablo için filtre uygulanmamış veriyi de kullanabiliriz.
-            # Şimdilik "df_f" (filtrelenmiş) kullanmak daha dinamik olur.
-            
-            # Veri Hazırlığı
+            # Filtrelenmiş veri üzerinden
             zayi_ozet = df_f.groupby('Ilce').agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
-            zayi_ozet['Zayi Oranı (%)'] = (zayi_ozet['Zayi'] / (zayi_ozet['Tuketim'] + zayi_ozet['Zayi']) * 100).fillna(0).round(2)
+            # Oran hesapla (0'a bölme hatasını önle)
+            zayi_ozet['Zayi Oranı (%)'] = zayi_ozet.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
+            
+            # Sadece Zayi > 0 olanları veya hepsini göster (Sıralama: Zayi Oranı)
             zayi_ozet = zayi_ozet.sort_values('Zayi', ascending=False)
             
             col_z1, col_z2 = st.columns(2)
@@ -350,10 +350,9 @@ if tuketim_file and stok_file:
             
             st.markdown("---")
             st.markdown("#### 🏢 En Çok Zayi Veren 20 Kurum")
+            
             kurum_zayi = df_f.groupby(['Ilce', 'Birim', 'Urun']).agg({'Zayi': 'sum'}).reset_index()
-            # 0 Zayi olanları göstermeye gerek yok
-            kurum_zayi = kurum_zayi[kurum_zayi['Zayi'] > 0]
-            kurum_zayi = kurum_zayi.sort_values('Zayi', ascending=False).head(20)
+            kurum_zayi = kurum_zayi[kurum_zayi['Zayi'] > 0].sort_values('Zayi', ascending=False).head(20)
             
             st.dataframe(kurum_zayi, use_container_width=True, hide_index=True)
             
