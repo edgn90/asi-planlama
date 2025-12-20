@@ -91,7 +91,7 @@ with c1:
 with c2:
     asiri_esik = st.number_input("Aşırı (Gün)", value=60)
 
-# --- DOSYA YÜKLEME ALANI (GÜNCELLENDİ) ---
+# --- DOSYA YÜKLEME ALANI ---
 col_u1, col_u2 = st.columns(2)
 with col_u1:
     tuketim_file = st.file_uploader("📂 Dönemsel Tüketim Raporu (CSV)", type=["csv"])
@@ -104,7 +104,6 @@ if tuketim_file and stok_file:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
         # --- CSV OKUMA VE HATA YÖNETİMİ ---
-        # 1. Tüketim Dosyası
         try:
             tuketim_file.seek(0)
             df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='utf-8')
@@ -112,7 +111,6 @@ if tuketim_file and stok_file:
             tuketim_file.seek(0)
             df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='iso-8859-9')
             
-        # 2. Stok Dosyası
         try:
             stok_file.seek(0)
             df_raw_s = pd.read_csv(stok_file, header=3, encoding='utf-8')
@@ -120,11 +118,11 @@ if tuketim_file and stok_file:
             stok_file.seek(0)
             df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
         
-        # Sütun isimlerini temizle
+        # Temizlik
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
 
-        # --- AKILLI SÜTUN ONARICI ---
+        # Akıllı Sütun Onarıcı
         def smart_fix_columns(df):
             rename_map = {}
             for col in df.columns:
@@ -139,7 +137,6 @@ if tuketim_file and stok_file:
                     rename_map[col] = 'ÜRÜN TANIMI'
                 elif 'TOPLAM' in col_upper and 'DOZ' in col_upper:
                     rename_map[col] = 'TOPLAM DOZ'
-            
             if rename_map:
                 df.rename(columns=rename_map, inplace=True)
             return df
@@ -154,7 +151,7 @@ if tuketim_file and stok_file:
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
 
-        # --- ANA DEPO AYRIŞTIRMA ---
+        # --- ANA DEPO VE HESAPLAMALAR ---
         is_ana_depo = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
                       (df_raw_s['BIRIM ADI'].str.contains('ISTANBUL ISM', case=False, na=False)) & \
                       (df_raw_s['BIRIM TIPI'].str.contains('ISM', case=False, na=False))
@@ -176,7 +173,6 @@ if tuketim_file and stok_file:
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
         res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
 
-        # Durum Belirleme
         def get_durum(row):
             if row['Yetme_Suresi'] < kritik_esik:
                 return "🚨 KRİTİK"
@@ -188,7 +184,7 @@ if tuketim_file and stok_file:
 
         res_df['Durum'] = res_df.apply(get_durum, axis=1)
 
-        # --- YAN MENÜ: FİLTRELER ---
+        # --- FİLTRELER ---
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
         sec_asi = st.sidebar.multiselect("💉 Aşı Filtrele", options=sorted(res_df['Urun'].unique()))
         
@@ -222,8 +218,8 @@ if tuketim_file and stok_file:
         
         st.markdown("---")
 
-        # 3 SEKMELİ YAPI
-        tab1, tab2, tab3 = st.tabs(["📦 Sevkiyat Planı", "⚠️ Fazla Stok Yönetimi", "📍 İlçe Bazlı Özet"])
+        # --- 4 SEKMELİ YAPI ---
+        tab1, tab2, tab3, tab4 = st.tabs(["📦 Sevkiyat Planı", "⚠️ Fazla Stok Yönetimi", "📍 İlçe Bazlı Özet", "📊 İl Geneli"])
 
         with tab1:
             st.caption("Aşağıdaki liste sadece aşı gönderilmesi gereken (İhtiyaç > 0) kurumları içerir.")
@@ -231,7 +227,6 @@ if tuketim_file and stok_file:
             durum_sirasi = {"🚨 KRİTİK": 0, "✅ Yeterli": 1, "⚠️ AŞIRI": 2}
             f1_sevk['sort_key'] = f1_sevk['Durum'].map(durum_sirasi)
             f1_sevk = f1_sevk.sort_values(['sort_key', 'Gonderilecek'], ascending=[True, False]).drop('sort_key', axis=1)
-
             st.dataframe(f1_sevk[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek', 'Yetme_Suresi']], use_container_width=True)
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 Sevkiyat Excel", to_excel(f1_sevk), "sevkiyat_plani.xlsx")
@@ -250,12 +245,65 @@ if tuketim_file and stok_file:
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
             f2_visible = df_i[df_i['Gonderilecek'] > 0].copy().sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
-            
             st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
             st.dataframe(f2_visible, use_container_width=True)
             c5, c6 = st.columns(2)
             with c5: st.download_button("📥 İlçe Excel", to_excel(f2_visible), "ilce_ozet.xlsx")
             with c6: st.download_button("📥 İlçe PDF", to_pdf(f2_visible, "Ilce Ozet"), "ilce_ozet.pdf")
+        
+        # --- YENİ EKLENEN 4. SEKME: İL GENELİ ÖZETİ ---
+        with tab4:
+            st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
+            
+            # 1. Aşı Bazında Verileri Hazırla
+            # Toplam Tüketim
+            grp_tuketim = df_raw_t.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
+            
+            # İl Geneli Stok (Her şey dahil)
+            grp_stok_total = df_raw_s.groupby('ÜRÜN TANIMI')['Stok'].sum()
+            
+            # İl Ana Depo (ISM) Stoğu (is_ana_depo maskesini kullanıyoruz)
+            grp_stok_ism = df_raw_s[is_ana_depo].groupby('ÜRÜN TANIMI')['Stok'].sum()
+            
+            # Birleştirme (Dataframe oluştur)
+            # Tüm aşı isimlerini kapsayacak şekilde bir index oluşturuyoruz
+            all_vaccines = grp_stok_total.index.union(grp_tuketim.index).union(grp_stok_ism.index)
+            df_genel = pd.DataFrame(index=all_vaccines)
+            
+            df_genel['İl Geneli Stok'] = grp_stok_total
+            df_genel['İl Ana Depo (ISM)'] = grp_stok_ism
+            df_genel['Toplam Tüketim'] = grp_tuketim
+            
+            # NaN değerleri 0 yap
+            df_genel = df_genel.fillna(0)
+            
+            # Saha Stoğunu Hesapla (İl Geneli - ISM)
+            df_genel['Saha (TSM, ASM, Son)'] = df_genel['İl Geneli Stok'] - df_genel['İl Ana Depo (ISM)']
+            
+            # Günlük Ortalama Tüketim
+            df_genel['Günlük ortalama tüketim'] = df_genel['Toplam Tüketim'] / oto_gun_sayisi
+            
+            # Yetme Süresi (Gün) -> Toplam Stok / Günlük Ortalama
+            df_genel['Yetme Süresi (Gün)'] = df_genel.apply(
+                lambda r: r['İl Geneli Stok'] / r['Günlük ortalama tüketim'] if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
+            )
+            
+            # Yuvarlama ve Düzenleme
+            df_genel['Günlük ortalama tüketim'] = df_genel['Günlük ortalama tüketim'].round(2)
+            df_genel['Yetme Süresi (Gün)'] = df_genel['Yetme Süresi (Gün)'].round(1)
+            
+            # Sütun Sıralaması (İstediğiniz gibi)
+            df_genel = df_genel.reset_index().rename(columns={'index': 'Aşılar'})
+            cols_order = ['Aşılar', 'İl Geneli Stok', 'İl Ana Depo (ISM)', 'Saha (TSM, ASM, Son)', 
+                          'Toplam Tüketim', 'Günlük ortalama tüketim', 'Yetme Süresi (Gün)']
+            df_genel = df_genel[cols_order]
+            
+            # Gösterim
+            st.dataframe(df_genel, use_container_width=True, hide_index=True)
+            
+            c7, c8 = st.columns(2)
+            with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
+            with c8: st.download_button("📥 İl Geneli PDF", to_pdf(df_genel, "Il Geneli Stok ve Tuketim"), "il_geneli_ozet.pdf")
 
     except Exception as e:
         st.error(f"Hata: {e}")
