@@ -43,7 +43,7 @@ def get_dates_from_csv(file):
 def to_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Plan')
+        df.to_excel(writer, index=False, sheet_name='Rapor')
     return output.getvalue()
 
 def tr_fix(text):
@@ -103,7 +103,7 @@ if tuketim_file and stok_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
-        # --- CSV OKUMA VE HATA YÖNETİMİ ---
+        # --- CSV OKUMA ---
         try:
             tuketim_file.seek(0)
             df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='utf-8')
@@ -135,7 +135,7 @@ if tuketim_file and stok_file:
                     rename_map[col] = 'BIRIM TIPI'
                 elif 'TAN' in col_upper and 'IMI' in col_upper:
                     rename_map[col] = 'ÜRÜN TANIMI'
-                elif 'TOPLAM' in col_upper and 'DOZ' in col_upper:
+                elif 'TOPLAM' in col_upper and 'DOZ' in col_upper and 'UYGULANAN' not in col_upper: # Stoktaki doz
                     rename_map[col] = 'TOPLAM DOZ'
             if rename_map:
                 df.rename(columns=rename_map, inplace=True)
@@ -144,10 +144,25 @@ if tuketim_file and stok_file:
         df_raw_s = smart_fix_columns(df_raw_s)
         df_raw_t = smart_fix_columns(df_raw_t)
 
+        # Zayi Sütununu Bulma (İsmi çok uzun olduğu için arama ile buluyoruz)
+        zayi_col = None
+        for col in df_raw_t.columns:
+            if "ZAYI" in col.upper() and "TOPLAMI" in col.upper():
+                zayi_col = col
+                break
+        
+        # Veri Doldurma
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
         df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']].ffill()
         
+        # Sayısal Dönüşümler
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
+        
+        if zayi_col:
+            df_raw_t['Zayi'] = pd.to_numeric(df_raw_t[zayi_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
+        else:
+            df_raw_t['Zayi'] = 0
+
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
 
@@ -159,15 +174,17 @@ if tuketim_file and stok_file:
         df_ana_depo_stok = df_raw_s[is_ana_depo].copy()
         df_stok_hesaplama = df_raw_s[~is_ana_depo].copy()
         
-        df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Tuketim'].sum().reset_index()
-        df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim']
+        # Gruplamalar
+        # Tüketim tablosunda Zayi de toplanmalı
+        df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
+        df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Zayi']
         
         df_s = df_stok_hesaplama.groupby(['ILÇE', 'BIRIM ADI', 'BIRIM TIPI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
         df_s.columns = ['Ilce', 'Birim', 'Tip', 'Urun', 'Stok']
         
         res_df = pd.merge(df_c, df_s, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
         
-        # Hesaplama
+        # Planlama Hesaplamaları
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
@@ -188,8 +205,6 @@ if tuketim_file and stok_file:
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
         sec_asi = st.sidebar.multiselect("💉 Aşı Filtrele", options=sorted(res_df['Urun'].unique()))
         
-        # --- ANA DEPO EXPANDER KALDIRILDI (İSTEK ÜZERİNE) ---
-
         # --- FİLTRE UYGULAMA ---
         df_f = res_df.copy()
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
@@ -214,8 +229,14 @@ if tuketim_file and stok_file:
         
         st.markdown("---")
 
-        # --- 4 SEKMELİ YAPI ---
-        tab1, tab2, tab3, tab4 = st.tabs(["📦 Sevkiyat Planı", "⚠️ Fazla Stok Yönetimi", "📍 İlçe Bazlı Özet", "📊 İl Geneli"])
+        # --- 5 SEKMELİ YAPI (YENİ SEKME EKLENDİ) ---
+        tab1, tab2, tab3, tab4, tab5 = st.tabs([
+            "📦 Sevkiyat Planı", 
+            "⚠️ Fazla Stok Yönetimi", 
+            "📍 İlçe Bazlı Özet", 
+            "📊 İl Geneli",
+            "📉 Zayi ve Verimlilik Analizi"
+        ])
 
         with tab1:
             st.caption("Aşağıdaki liste sadece aşı gönderilmesi gereken (İhtiyaç > 0) kurumları içerir.")
@@ -247,7 +268,6 @@ if tuketim_file and stok_file:
             with c5: st.download_button("📥 İlçe Excel", to_excel(f2_visible), "ilce_ozet.xlsx")
             with c6: st.download_button("📥 İlçe PDF", to_pdf(f2_visible, "Ilce Ozet"), "ilce_ozet.pdf")
         
-        # --- 4. SEKME (GÜNCELLENDİ: Renklendirme Eklendi) ---
         with tab4:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
             
@@ -280,28 +300,14 @@ if tuketim_file and stok_file:
             
             df_genel = df_genel[cols_order]
 
-            # --- RENKLENDİRME FONKSİYONU ---
             def highlight_yetme_suresi(val):
-                if not isinstance(val, (int, float)):
-                    return ''
-                if val < 15:
-                    color = '#ff4b4b' # Kırmızı (Acil)
-                    text_color = 'white'
-                elif val < 30:
-                    color = '#ffa500' # Turuncu (Riskli)
-                    text_color = 'black'
-                elif val < 60:
-                    color = '#ffe066' # Sarı (Dikkat)
-                    text_color = 'black'
-                else:
-                    color = '#90ee90' # Yeşil (Güvenli)
-                    text_color = 'black'
-                return f'background-color: {color}; color: {text_color}'
+                if not isinstance(val, (int, float)): return ''
+                if val < 15: return 'background-color: #ff4b4b; color: white'
+                elif val < 30: return 'background-color: #ffa500; color: black'
+                elif val < 60: return 'background-color: #ffe066; color: black'
+                else: return 'background-color: #90ee90; color: black'
 
-            # Stili uygula
             styled_df = df_genel.style.map(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)'])
-            
-            # Formatlama
             styled_df = styled_df.format({
                 "Günlük ortalama tüketim": "{:.2f}", 
                 "Yetme Süresi (Gün)": "{:.1f}",
@@ -316,6 +322,44 @@ if tuketim_file and stok_file:
             c7, c8 = st.columns(2)
             with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
             with c8: st.download_button("📥 İl Geneli PDF", to_pdf(df_genel, "Il Geneli Stok ve Tuketim"), "il_geneli_ozet.pdf")
+
+        # --- YENİ EKLENEN 5. SEKME: ZAYİ VE VERİMLİLİK ANALİZİ ---
+        with tab5:
+            st.subheader("📉 Zayi ve Verimlilik Analizi")
+            st.caption("Bu veriler tüketim raporundaki 'Zayi/Fire/İmha' sütunundan hesaplanmıştır.")
+
+            # Filtrelenmiş veri üzerinden analiz (Seçili ilçe ve aşıya göre)
+            # Ancak genel tablo için filtre uygulanmamış veriyi de kullanabiliriz.
+            # Şimdilik "df_f" (filtrelenmiş) kullanmak daha dinamik olur.
+            
+            # Veri Hazırlığı
+            zayi_ozet = df_f.groupby('Ilce').agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
+            zayi_ozet['Zayi Oranı (%)'] = (zayi_ozet['Zayi'] / (zayi_ozet['Tuketim'] + zayi_ozet['Zayi']) * 100).fillna(0).round(2)
+            zayi_ozet = zayi_ozet.sort_values('Zayi', ascending=False)
+            
+            col_z1, col_z2 = st.columns(2)
+            
+            with col_z1:
+                st.markdown("#### 🏙️ İlçelere Göre Zayi Durumu")
+                st.dataframe(zayi_ozet, use_container_width=True, hide_index=True)
+            
+            with col_z2:
+                st.markdown("#### 💉 Aşılara Göre Toplam Zayi")
+                asi_zayi = df_f.groupby('Urun')['Zayi'].sum().reset_index().sort_values('Zayi', ascending=False)
+                st.dataframe(asi_zayi, use_container_width=True, hide_index=True)
+            
+            st.markdown("---")
+            st.markdown("#### 🏢 En Çok Zayi Veren 20 Kurum")
+            kurum_zayi = df_f.groupby(['Ilce', 'Birim', 'Urun']).agg({'Zayi': 'sum'}).reset_index()
+            # 0 Zayi olanları göstermeye gerek yok
+            kurum_zayi = kurum_zayi[kurum_zayi['Zayi'] > 0]
+            kurum_zayi = kurum_zayi.sort_values('Zayi', ascending=False).head(20)
+            
+            st.dataframe(kurum_zayi, use_container_width=True, hide_index=True)
+            
+            c9, c10 = st.columns(2)
+            with c9: st.download_button("📥 Zayi Analizi Excel", to_excel(zayi_ozet), "zayi_analizi.xlsx")
+            with c10: st.download_button("📥 Zayi Analizi PDF", to_pdf(zayi_ozet, "Zayi Analizi"), "zayi_analizi.pdf")
 
     except Exception as e:
         st.error(f"Hata: {e}")
