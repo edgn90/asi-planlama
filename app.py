@@ -188,11 +188,7 @@ if tuketim_file and stok_file:
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
         sec_asi = st.sidebar.multiselect("💉 Aşı Filtrele", options=sorted(res_df['Urun'].unique()))
         
-        with st.sidebar.expander("🚚 ANA DEPO (İSM)", expanded=False):
-            if not df_ana_depo_stok.empty:
-                st.dataframe(df_ana_depo_stok[['ÜRÜN TANIMI', 'Stok']], hide_index=True)
-            else:
-                st.write("Veri yok.")
+        # --- ANA DEPO EXPANDER KALDIRILDI (İSTEK ÜZERİNE) ---
 
         # --- FİLTRE UYGULAMA ---
         df_f = res_df.copy()
@@ -251,20 +247,16 @@ if tuketim_file and stok_file:
             with c5: st.download_button("📥 İlçe Excel", to_excel(f2_visible), "ilce_ozet.xlsx")
             with c6: st.download_button("📥 İlçe PDF", to_pdf(f2_visible, "Ilce Ozet"), "ilce_ozet.pdf")
         
-        # --- 4. SEKME (GÜNCELLENDİ: 'Urun' Sütun Adı) ---
+        # --- 4. SEKME (GÜNCELLENDİ: Renklendirme Eklendi) ---
         with tab4:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
             
-            # 1. Aşı Bazında Verileri Hazırla
             grp_tuketim = df_raw_t.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
             grp_stok_total = df_raw_s.groupby('ÜRÜN TANIMI')['Stok'].sum()
             grp_stok_ism = df_raw_s[is_ana_depo].groupby('ÜRÜN TANIMI')['Stok'].sum()
             
-            # Birleştirme
             all_vaccines = grp_stok_total.index.union(grp_tuketim.index).union(grp_stok_ism.index)
             df_genel = pd.DataFrame(index=all_vaccines)
-            
-            # Index ismini "Urun" olarak ata
             df_genel.index.name = 'Urun'
             
             df_genel['İl Geneli Stok'] = grp_stok_total
@@ -279,20 +271,47 @@ if tuketim_file and stok_file:
                 lambda r: round(r['İl Geneli Stok'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
             )
             
-            # Reset Index ve İsimlendirme Garantisi
             df_genel = df_genel.reset_index()
-            
-            # Sütun Sıralaması (Aşılar yerine Urun)
             cols_order = ['Urun', 'İl Geneli Stok', 'İl Ana Depo (ISM)', 'Saha (TSM, ASM, Son)', 
                           'Toplam Tüketim', 'Günlük ortalama tüketim', 'Yetme Süresi (Gün)']
             
-            # Güvenlik Kontrolü
             if 'Urun' not in df_genel.columns:
                  df_genel.rename(columns={df_genel.columns[0]: 'Urun'}, inplace=True)
-
-            df_genel = df_genel[cols_order]
             
-            st.dataframe(df_genel, use_container_width=True, hide_index=True)
+            df_genel = df_genel[cols_order]
+
+            # --- RENKLENDİRME FONKSİYONU ---
+            def highlight_yetme_suresi(val):
+                if not isinstance(val, (int, float)):
+                    return ''
+                if val < 15:
+                    color = '#ff4b4b' # Kırmızı (Acil)
+                    text_color = 'white'
+                elif val < 30:
+                    color = '#ffa500' # Turuncu (Riskli)
+                    text_color = 'black'
+                elif val < 60:
+                    color = '#ffe066' # Sarı (Dikkat)
+                    text_color = 'black'
+                else:
+                    color = '#90ee90' # Yeşil (Güvenli)
+                    text_color = 'black'
+                return f'background-color: {color}; color: {text_color}'
+
+            # Stili uygula
+            styled_df = df_genel.style.map(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)'])
+            
+            # Formatlama
+            styled_df = styled_df.format({
+                "Günlük ortalama tüketim": "{:.2f}", 
+                "Yetme Süresi (Gün)": "{:.1f}",
+                "İl Geneli Stok": "{:.0f}",
+                "İl Ana Depo (ISM)": "{:.0f}",
+                "Saha (TSM, ASM, Son)": "{:.0f}",
+                "Toplam Tüketim": "{:.0f}"
+            })
+            
+            st.dataframe(styled_df, use_container_width=True, hide_index=True)
             
             c7, c8 = st.columns(2)
             with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
