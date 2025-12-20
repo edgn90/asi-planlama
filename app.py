@@ -251,54 +251,47 @@ if tuketim_file and stok_file:
             with c5: st.download_button("📥 İlçe Excel", to_excel(f2_visible), "ilce_ozet.xlsx")
             with c6: st.download_button("📥 İlçe PDF", to_pdf(f2_visible, "Ilce Ozet"), "ilce_ozet.pdf")
         
-        # --- YENİ EKLENEN 4. SEKME: İL GENELİ ÖZETİ ---
+        # --- 4. SEKME (GÜNCELLENDİ: 'Urun' Sütun Adı) ---
         with tab4:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
             
             # 1. Aşı Bazında Verileri Hazırla
-            # Toplam Tüketim
             grp_tuketim = df_raw_t.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
-            
-            # İl Geneli Stok (Her şey dahil)
             grp_stok_total = df_raw_s.groupby('ÜRÜN TANIMI')['Stok'].sum()
-            
-            # İl Ana Depo (ISM) Stoğu (is_ana_depo maskesini kullanıyoruz)
             grp_stok_ism = df_raw_s[is_ana_depo].groupby('ÜRÜN TANIMI')['Stok'].sum()
             
-            # Birleştirme (Dataframe oluştur)
-            # Tüm aşı isimlerini kapsayacak şekilde bir index oluşturuyoruz
+            # Birleştirme
             all_vaccines = grp_stok_total.index.union(grp_tuketim.index).union(grp_stok_ism.index)
             df_genel = pd.DataFrame(index=all_vaccines)
+            
+            # Index ismini "Urun" olarak ata
+            df_genel.index.name = 'Urun'
             
             df_genel['İl Geneli Stok'] = grp_stok_total
             df_genel['İl Ana Depo (ISM)'] = grp_stok_ism
             df_genel['Toplam Tüketim'] = grp_tuketim
             
-            # NaN değerleri 0 yap
             df_genel = df_genel.fillna(0)
             
-            # Saha Stoğunu Hesapla (İl Geneli - ISM)
             df_genel['Saha (TSM, ASM, Son)'] = df_genel['İl Geneli Stok'] - df_genel['İl Ana Depo (ISM)']
-            
-            # Günlük Ortalama Tüketim
-            df_genel['Günlük ortalama tüketim'] = df_genel['Toplam Tüketim'] / oto_gun_sayisi
-            
-            # Yetme Süresi (Gün) -> Toplam Stok / Günlük Ortalama
+            df_genel['Günlük ortalama tüketim'] = (df_genel['Toplam Tüketim'] / oto_gun_sayisi).round(2)
             df_genel['Yetme Süresi (Gün)'] = df_genel.apply(
-                lambda r: r['İl Geneli Stok'] / r['Günlük ortalama tüketim'] if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
+                lambda r: round(r['İl Geneli Stok'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
             )
             
-            # Yuvarlama ve Düzenleme
-            df_genel['Günlük ortalama tüketim'] = df_genel['Günlük ortalama tüketim'].round(2)
-            df_genel['Yetme Süresi (Gün)'] = df_genel['Yetme Süresi (Gün)'].round(1)
+            # Reset Index ve İsimlendirme Garantisi
+            df_genel = df_genel.reset_index()
             
-            # Sütun Sıralaması (İstediğiniz gibi)
-            df_genel = df_genel.reset_index().rename(columns={'index': 'Aşılar'})
-            cols_order = ['Aşılar', 'İl Geneli Stok', 'İl Ana Depo (ISM)', 'Saha (TSM, ASM, Son)', 
+            # Sütun Sıralaması (Aşılar yerine Urun)
+            cols_order = ['Urun', 'İl Geneli Stok', 'İl Ana Depo (ISM)', 'Saha (TSM, ASM, Son)', 
                           'Toplam Tüketim', 'Günlük ortalama tüketim', 'Yetme Süresi (Gün)']
+            
+            # Güvenlik Kontrolü
+            if 'Urun' not in df_genel.columns:
+                 df_genel.rename(columns={df_genel.columns[0]: 'Urun'}, inplace=True)
+
             df_genel = df_genel[cols_order]
             
-            # Gösterim
             st.dataframe(df_genel, use_container_width=True, hide_index=True)
             
             c7, c8 = st.columns(2)
