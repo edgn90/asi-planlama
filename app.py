@@ -145,10 +145,16 @@ if tuketim_file and stok_file:
 
         df_raw_s = smart_fix_columns(df_raw_s)
         df_raw_t = smart_fix_columns(df_raw_t)
-
-        df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
-        df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM ADI', 'BIRIM TIPI']].ffill()
         
+        # İsim eşitlemesi (Birinde BIRIM diğerinde BIRIM ADI)
+        if 'BIRIM ADI' in df_raw_s.columns:
+             df_raw_s.rename(columns={'BIRIM ADI': 'BIRIM'}, inplace=True)
+
+        # Veri Doldurma
+        df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
+        df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']].ffill()
+        
+        # Sayısal Dönüşümler
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         
         if 'ZAYI' in df_raw_t.columns:
@@ -159,22 +165,39 @@ if tuketim_file and stok_file:
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
 
-        # --- ANA DEPO VE HESAPLAMALAR ---
-        is_ana_depo = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
-                      (df_raw_s['BIRIM ADI'].str.contains('ISTANBUL ISM', case=False, na=False)) & \
-                      (df_raw_s['BIRIM TIPI'].str.contains('ISM', case=False, na=False))
+        # --- KRİTİK AYRIŞTIRMA (ANA DEPO FİLTRESİ) ---
+        # İSM'yi tespit edip ayırıyoruz. Hem stoktan hem tüketimden.
         
-        df_ana_depo_stok = df_raw_s[is_ana_depo].copy()
-        df_stok_hesaplama = df_raw_s[~is_ana_depo].copy()
+        # Stok tablosundaki İSM satırları
+        mask_ism_stok = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
+                        (df_raw_s['BIRIM'].str.contains('ISM', case=False, na=False))
         
-        df_c = df_raw_t.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
+        # Tüketim tablosundaki İSM satırları (Eğer İSM tüketim kaydı varsa)
+        mask_ism_tuketim = (df_raw_t['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
+                           (df_raw_t['BIRIM'].str.contains('ISM', case=False, na=False))
+
+        # SAHA VERİLERİ (İSM HARİÇ) - Tüm sekmeler bunu kullanacak
+        df_s_saha = df_raw_s[~mask_ism_stok].copy()
+        df_t_saha = df_raw_t[~mask_ism_tuketim].copy()
+
+        # ANA DEPO VERİLERİ (Sadece 4. Sekme için)
+        df_s_ism = df_raw_s[mask_ism_stok].copy()
+        df_t_ism = df_raw_t[mask_ism_tuketim].copy() # Genelde boştur ama olsun
+
+        # --- MERGE VE HESAPLAMA (SADECE SAHA VERİSİ İLE) ---
+        df_c = df_t_saha.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Zayi']
         
-        df_s = df_stok_hesaplama.groupby(['ILÇE', 'BIRIM ADI', 'BIRIM TIPI', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
-        df_s.columns = ['Ilce', 'Birim', 'Tip', 'Urun', 'Stok']
+        # Not: Stok dosyasında BIRIM TIPI var, tüketimde olmayabilir, merge'de sorun olmasın diye sadece temel alanlar
+        df_s_grp = df_s_saha.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI', 'BIRIM TIPI'])['Stok'].sum().reset_index()
+        df_s_grp.columns = ['Ilce', 'Birim', 'Urun', 'Tip', 'Stok']
         
-        res_df = pd.merge(df_c, df_s, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
+        res_df = pd.merge(df_c, df_s_grp, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
         
+        # Tip bilgisini stoktan alamadığımız (sadece tüketim olan) satırlar için doldurma
+        res_df['Tip'] = res_df['Tip'].replace(0, 'Bilinmiyor')
+
+        # Planlama Hesaplamaları
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
@@ -185,8 +208,8 @@ if tuketim_file and stok_file:
                 return "🚨 KRİTİK"
             tip_str = str(row['Tip']).upper()
             if row['Yetme_Suresi'] > asiri_esik:
-                if any(x in tip_str for x in ['ASM', 'SON KULLANICI']):
-                    return "⚠️ AŞIRI"
+                # İSM zaten filtrelendiği için buradaki herkes saha birimi (ASM/TSM/Son Kullanıcı)
+                return "⚠️ AŞIRI"
             return "✅ Yeterli"
 
         res_df['Durum'] = res_df.apply(get_durum, axis=1)
@@ -260,22 +283,35 @@ if tuketim_file and stok_file:
         
         with tab4:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
+            st.caption("Bu tablo; Saha (ASM/TSM) verileri ile İl Ana Depo (İSM) verilerinin birleşimidir.")
             
-            grp_tuketim = df_raw_t.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
-            grp_stok_total = df_raw_s.groupby('ÜRÜN TANIMI')['Stok'].sum()
-            grp_stok_ism = df_raw_s[is_ana_depo].groupby('ÜRÜN TANIMI')['Stok'].sum()
+            # Burada 'Saha' verilerini filtrelenmiş DF'den (df_t_saha, df_s_saha) alıyoruz
+            grp_tuketim_saha = df_t_saha.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
+            grp_stok_saha = df_s_saha.groupby('ÜRÜN TANIMI')['Stok'].sum()
             
-            all_vaccines = grp_stok_total.index.union(grp_tuketim.index).union(grp_stok_ism.index)
+            # Ana depo verisi
+            grp_stok_ism = df_s_ism.groupby('ÜRÜN TANIMI')['Stok'].sum()
+            # İSM Tüketimi (Varsa)
+            grp_tuketim_ism = df_t_ism.groupby('ÜRÜN TANIMI')['Tuketim'].sum() 
+            
+            # Birleştirilmiş Tüketim (Saha + İSM)
+            grp_tuketim_total = grp_tuketim_saha.add(grp_tuketim_ism, fill_value=0)
+            
+            # Tüm aşılar listesi
+            all_vaccines = grp_stok_saha.index.union(grp_stok_ism.index).union(grp_tuketim_total.index)
+            
             df_genel = pd.DataFrame(index=all_vaccines)
             df_genel.index.name = 'Urun'
             
-            df_genel['İl Geneli Stok'] = grp_stok_total
             df_genel['İl Ana Depo (ISM)'] = grp_stok_ism
-            df_genel['Toplam Tüketim'] = grp_tuketim
+            df_genel['Saha (TSM, ASM, Son)'] = grp_stok_saha
+            df_genel['Toplam Tüketim'] = grp_tuketim_total
             
             df_genel = df_genel.fillna(0)
             
-            df_genel['Saha (TSM, ASM, Son)'] = df_genel['İl Geneli Stok'] - df_genel['İl Ana Depo (ISM)']
+            # İl Geneli Stok = Saha + İSM
+            df_genel['İl Geneli Stok'] = df_genel['İl Ana Depo (ISM)'] + df_genel['Saha (TSM, ASM, Son)']
+            
             df_genel['Günlük ortalama tüketim'] = (df_genel['Toplam Tüketim'] / oto_gun_sayisi).round(2)
             df_genel['Yetme Süresi (Gün)'] = df_genel.apply(
                 lambda r: round(r['İl Geneli Stok'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
@@ -313,11 +349,11 @@ if tuketim_file and stok_file:
             with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
             with c8: st.download_button("📥 İl Geneli PDF", to_pdf(df_genel, "Il Geneli Stok ve Tuketim"), "il_geneli_ozet.pdf")
 
-        # --- 5. SEKME: ZAYİ VE VERİMLİLİK ANALİZİ (YENİ ÖZELLİK EKLENDİ) ---
+        # --- 5. SEKME: ZAYİ VE VERİMLİLİK ANALİZİ ---
         with tab5:
             st.subheader("📉 Zayi ve Verimlilik Analizi")
             
-            # Seçim Kutusu (Radio Button)
+            # Zayi analizinde de sadece SAHA verisi (df_f) kullanılır. İSM hataları burayı bozmaz.
             analiz_turu = st.radio(
                 "Analiz Türü Seçin:",
                 ("Tüm Aşılar (Genel Görünüm)", "Sadece Tekli Doz Aşılar (Kritik Analiz)"),
@@ -326,16 +362,12 @@ if tuketim_file and stok_file:
             
             st.info("💡 Not: 'Sadece Tekli Doz' seçeneği; BCG, Oral Polio ve PPD gibi çoklu dozlu aşıları hariç tutarak, operasyonel zayiyi (kırılma, soğuk zincir vb.) gösterir.")
 
-            # Filtreleme Mantığı
             df_zayi = df_f.copy()
             
             if analiz_turu == "Sadece Tekli Doz Aşılar (Kritik Analiz)":
-                # Çoklu doz aşıları filtrele
-                coklu_dozlar = ['BCG', 'ORAL POLIO', 'PPD', 'KIZAMIK', 'KIZAMIKCIK'] # Yaygın çoklu dozlar
-                # Daha esnek filtreleme (içinde geçiyorsa at)
+                coklu_dozlar = ['BCG', 'ORAL POLIO', 'PPD', 'KIZAMIK', 'KIZAMIKCIK']
                 df_zayi = df_zayi[~df_zayi['Urun'].str.upper().str.contains('BCG|POLIO|PPD', regex=True)]
 
-            # Hesaplamalar
             zayi_ozet = df_zayi.groupby('Ilce').agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
             zayi_ozet['Zayi Oranı (%)'] = zayi_ozet.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
             zayi_ozet = zayi_ozet.sort_values('Zayi', ascending=False)
