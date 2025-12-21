@@ -302,26 +302,26 @@ if tuketim_file and stok_file:
             
             df_genel = df_genel[cols_order]
 
-            # --- GRAFİK ALANI (YENİ EKLENDİ) ---
+            # --- GRAFİK ALANI (HATA DÜZELTİLDİ: RENK MANTIĞI SADELEŞTİRİLDİ) ---
             st.markdown("#### 📉 Grafiksel Durum Analizi (Yetme Süresi)")
             
-            # Grafik verisi hazırlığı (Sonsuz süreleri grafikte çok büyük çıkmasın diye 180 ile sınırla)
             chart_data = df_genel.copy()
+            # 180'den büyükleri görselde 180'e sabitle (Sonsuz çizgileri önlemek için)
             chart_data['Gorsel_Sure'] = chart_data['Yetme Süresi (Gün)'].apply(lambda x: 180 if x > 180 else x)
             
+            # Renk kodunu Python tarafında belirle (Altair hatasını önlemek için)
+            def get_color(val):
+                if val < 15: return '#ff4b4b' # Kırmızı
+                if val < 30: return '#ffa500' # Turuncu
+                if val < 60: return '#ffe066' # Sarı
+                return '#90ee90'              # Yeşil
+            
+            chart_data['Color'] = chart_data['Yetme Süresi (Gün)'].apply(get_color)
+
             chart = alt.Chart(chart_data).mark_bar().encode(
                 x=alt.X('Urun', sort='-y', title='Ürün'),
                 y=alt.Y('Gorsel_Sure', title='Yetme Süresi (Gün) - (Maks 180+)'),
-                color=alt.condition(
-                    alt.datum['Yetme Süresi (Gün)'] < 15, alt.value('#ff4b4b'),  # Kırmızı
-                    alt.condition(
-                        alt.datum['Yetme Süresi (Gün)'] < 30, alt.value('#ffa500'),  # Turuncu
-                        alt.condition(
-                            alt.datum['Yetme Süresi (Gün)'] < 60, alt.value('#ffe066'),  # Sarı
-                            alt.value('#90ee90')  # Yeşil
-                        )
-                    )
-                ),
+                color=alt.Color('Color', scale=None, legend=None), # Doğrudan renk kodunu kullan
                 tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim']
             ).properties(height=400)
             
