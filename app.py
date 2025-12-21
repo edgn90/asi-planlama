@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import altair as alt
+import pydeck as pdk
 from datetime import datetime
 import io
 from fpdf import FPDF
@@ -10,6 +11,28 @@ from fpdf import FPDF
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
 
 st.title("💉 Akıllı Aşı Talep Tahmini ve Stok Yönetim Paneli")
+
+# --- KOORDİNAT VERİTABANI (İSTANBUL İLÇELERİ) ---
+IST_COORDS = {
+    'ADALAR': [40.8763, 29.0963], 'ARNAVUTKOY': [41.1866, 28.7397], 'ARNAVUTKÖY': [41.1866, 28.7397],
+    'ATASEHIR': [40.9847, 29.1067], 'AVCILAR': [40.9801, 28.7175], 'BAGCILAR': [41.0346, 28.8566], 'BAĞCILAR': [41.0346, 28.8566],
+    'BAHCELIEVLER': [41.0000, 28.8643], 'BAHÇELİEVLER': [41.0000, 28.8643], 'BAKIRKOY': [40.9801, 28.8727], 'BAKIRKÖY': [40.9801, 28.8727],
+    'BASAKSEHIR': [41.0972, 28.8096], 'BAŞAKŞEHİR': [41.0972, 28.8096], 'BAYRAMPASA': [41.0356, 28.9126], 'BAYRAMPAŞA': [41.0356, 28.9126],
+    'BESIKTAS': [41.0422, 29.0067], 'BEŞİKTAŞ': [41.0422, 29.0067], 'BEYKOZ': [41.1171, 29.0970],
+    'BEYLIKDUZU': [41.0028, 28.6429], 'BEYLİKDÜZÜ': [41.0028, 28.6429], 'BEYOGLU': [41.0284, 28.9736], 'BEYOĞLU': [41.0284, 28.9736],
+    'BUYUKCEKMECE': [41.0216, 28.5790], 'BÜYÜKÇEKMECE': [41.0216, 28.5790], 'CATALCA': [41.1436, 28.4606], 'ÇATALCA': [41.1436, 28.4606],
+    'CEKMEKOY': [41.0351, 29.1730], 'ÇEKMEKÖY': [41.0351, 29.1730], 'ESENLER': [41.0350, 28.8920], 'ESENYURT': [41.0343, 28.6801],
+    'EYUPSULTAN': [41.0470, 28.9329], 'EYÜPSULTAN': [41.0470, 28.9329], 'FATIH': [41.0112, 28.9360], 'FATİH': [41.0112, 28.9360],
+    'GAZIOSMANPASA': [41.0573, 28.9114], 'GAZİOSMANPAŞA': [41.0573, 28.9114], 'GUNGOREN': [41.0232, 28.8726], 'GÜNGÖREN': [41.0232, 28.8726],
+    'KADIKOY': [40.9901, 29.0206], 'KADIKÖY': [40.9901, 29.0206], 'KAGITHANE': [41.0805, 28.9744], 'KAĞITHANE': [41.0805, 28.9744],
+    'KARTAL': [40.8885, 29.1856], 'KUCUKCEKMECE': [41.0003, 28.7816], 'KÜÇÜKÇEKMECE': [41.0003, 28.7816],
+    'MALTEPE': [40.9497, 29.1739], 'PENDIK': [40.8767, 29.2335], 'PENDİK': [40.8767, 29.2335],
+    'SANCAKTEPE': [40.9907, 29.2208], 'SARIYER': [41.1691, 29.0494], 'SILIVRI': [41.0742, 28.2482], 'SİLİVRİ': [41.0742, 28.2482],
+    'SULTANBEYLI': [40.9673, 29.2631], 'SULTANBEYLİ': [40.9673, 29.2631], 'SULTANGAZI': [41.1065, 28.8687], 'SULTANGAZİ': [41.1065, 28.8687],
+    'SILE': [41.1764, 29.6130], 'ŞİLE': [41.1764, 29.6130], 'SISLI': [41.0543, 28.9868], 'ŞİŞLİ': [41.0543, 28.9868],
+    'TUZLA': [40.8157, 29.3034], 'UMRANIYE': [41.0256, 29.0963], 'ÜMRANİYE': [41.0256, 29.0963],
+    'USKUDAR': [41.0247, 29.0172], 'ÜSKÜDAR': [41.0247, 29.0172], 'ZEYTINBURNU': [40.9897, 28.9037]
+}
 
 # --- YARDIMCI FONKSİYONLAR ---
 def clean_number(x):
@@ -256,11 +279,70 @@ if tuketim_file and stok_file:
             with c4: st.download_button("📥 İade PDF", to_pdf(f1_asiri, "Asiri Stok"), "asiri_stok.pdf")
 
         with tab3:
-            df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
-            df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
-            df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
-            f2_visible = df_i[df_i['Gonderilecek'] > 0].copy().sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
-            st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
+            st.subheader("📍 İlçe Bazlı Stok ve İhtiyaç Haritası")
+            
+            df_i = df_f.groupby(['Ilce']).agg({'Tuketim': 'sum', 'Stok': 'sum', 'Gonderilecek': 'sum'}).reset_index()
+            
+            # Koordinat Eşleştirme
+            def get_lat_lon(ilce_adi):
+                normalized = ilce_adi.upper().strip()
+                if normalized in IST_COORDS:
+                    return IST_COORDS[normalized]
+                return [None, None]
+
+            df_i['coords'] = df_i['Ilce'].apply(get_lat_lon)
+            df_i['lat'] = df_i['coords'].apply(lambda x: x[0])
+            df_i['lon'] = df_i['coords'].apply(lambda x: x[1])
+            
+            df_map = df_i.dropna(subset=['lat', 'lon']).copy()
+            
+            # Harita Katmanı (PyDeck)
+            # İhtiyaca göre boyut ve renk
+            # Eğer Gönderilecek > 0 ise Kırmızı ve büyük, değilse Yeşil ve küçük
+            df_map['radius'] = df_map['Gonderilecek'].apply(lambda x: 500 + (x * 0.5) if x > 0 else 200)
+            df_map['color'] = df_map['Gonderilecek'].apply(lambda x: [255, 0, 0, 160] if x > 0 else [0, 255, 0, 160]) # RGBA
+            
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                df_map,
+                pickable=True,
+                opacity=0.8,
+                stroked=True,
+                filled=True,
+                radius_scale=6,
+                radius_min_pixels=5,
+                radius_max_pixels=100,
+                line_width_min_pixels=1,
+                get_position='[lon, lat]',
+                get_radius='radius',
+                get_fill_color='color',
+                get_line_color=[0, 0, 0],
+            )
+
+            # İstanbul Merkezi
+            view_state = pdk.ViewState(latitude=41.0082, longitude=28.9784, zoom=9, pitch=0)
+
+            r = pdk.Deck(
+                layers=[layer],
+                initial_view_state=view_state,
+                tooltip={"text": "{Ilce}\n📦 İhtiyaç: {Gonderilecek}\n📊 Mevcut Stok: {Stok}"}
+            )
+
+            st.pydeck_chart(r)
+            st.caption("🔴 Kırmızı Daireler: Aşı İhtiyacı Olan İlçeler (Daire boyutu ihtiyaca göre büyür)")
+            st.caption("🟢 Yeşil Daireler: Stoğu Yeterli Olan İlçeler")
+            
+            st.markdown("---")
+            
+            # Tablo Görünümü
+            st.subheader("İlçe Bazlı Detaylar")
+            
+            # Önceki koddan gelen tablo verisi (Ürün kırılımlı)
+            df_table = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
+            df_table['Ihtiyac'] = (((df_table['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_table['Stok']
+            df_table['Gonderilecek'] = df_table['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
+            f2_visible = df_table[df_table['Gonderilecek'] > 0].copy().sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
+            
             st.dataframe(f2_visible, use_container_width=True)
             c5, c6 = st.columns(2)
             with c5: st.download_button("📥 İlçe Excel", to_excel(f2_visible), "ilce_ozet.xlsx")
@@ -302,33 +384,30 @@ if tuketim_file and stok_file:
             
             df_genel = df_genel[cols_order]
 
-            # --- GRAFİK ALANI (HATA DÜZELTİLDİ: RENK MANTIĞI SADELEŞTİRİLDİ) ---
+            # --- GRAFİK ALANI ---
             st.markdown("#### 📉 Grafiksel Durum Analizi (Yetme Süresi)")
             
             chart_data = df_genel.copy()
-            # 180'den büyükleri görselde 180'e sabitle (Sonsuz çizgileri önlemek için)
             chart_data['Gorsel_Sure'] = chart_data['Yetme Süresi (Gün)'].apply(lambda x: 180 if x > 180 else x)
             
-            # Renk kodunu Python tarafında belirle (Altair hatasını önlemek için)
             def get_color(val):
-                if val < 15: return '#ff4b4b' # Kırmızı
-                if val < 30: return '#ffa500' # Turuncu
-                if val < 60: return '#ffe066' # Sarı
-                return '#90ee90'              # Yeşil
+                if val < 15: return '#ff4b4b' 
+                if val < 30: return '#ffa500' 
+                if val < 60: return '#ffe066' 
+                return '#90ee90'
             
             chart_data['Color'] = chart_data['Yetme Süresi (Gün)'].apply(get_color)
 
             chart = alt.Chart(chart_data).mark_bar().encode(
                 x=alt.X('Urun', sort='-y', title='Ürün'),
                 y=alt.Y('Gorsel_Sure', title='Yetme Süresi (Gün) - (Maks 180+)'),
-                color=alt.Color('Color', scale=None, legend=None), # Doğrudan renk kodunu kullan
+                color=alt.Color('Color', scale=None, legend=None),
                 tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim']
             ).properties(height=400)
             
             st.altair_chart(chart, use_container_width=True)
             st.markdown("---")
 
-            # --- TABLO ALANI ---
             def highlight_yetme_suresi(val):
                 if not isinstance(val, (int, float)): return ''
                 if val < 15: return 'background-color: #ff4b4b; color: white'
