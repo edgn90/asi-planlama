@@ -4,6 +4,7 @@ import numpy as np
 from datetime import datetime
 import io
 from fpdf import FPDF
+import altair as alt
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
@@ -282,6 +283,7 @@ if tuketim_file and stok_file:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
             st.caption("Bu tablo; Saha (ASM/TSM) verileri ile İl Ana Depo (İSM) verilerinin birleşimidir.")
             
+            # Veri Hazırlama
             grp_tuketim_saha = df_t_saha.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
             grp_stok_saha = df_s_saha.groupby('ÜRÜN TANIMI')['Stok'].sum()
             grp_stok_ism = df_s_ism.groupby('ÜRÜN TANIMI')['Stok'].sum()
@@ -314,6 +316,36 @@ if tuketim_file and stok_file:
             
             df_genel = df_genel[cols_order]
 
+            # --- YENİ GRAFİK: YETME SÜRESİ ANALİZİ (RENKLİ) ---
+            st.markdown("### ⏳ Aşı Bazlı Yetme Süresi Analizi")
+            st.caption("Hangi aşının kaç gün yeteceği aşağıda gösterilmiştir. Renkler kritiklik düzeyini belirtir.")
+            
+            # Grafik Verisi Hazırlama
+            chart_df = df_genel.copy()
+            
+            # Renk kodu atama fonksiyonu (Altair için)
+            def get_chart_color(val):
+                if val < 15: return '#ff4b4b'   # Kırmızı
+                elif val < 30: return '#ffa500' # Turuncu
+                elif val < 60: return '#ffe066' # Sarı
+                else: return '#90ee90'          # Yeşil
+            
+            chart_df['Color'] = chart_df['Yetme Süresi (Gün)'].apply(get_chart_color)
+            
+            # Altair Grafik Çizimi
+            chart = alt.Chart(chart_df).mark_bar().encode(
+                x=alt.X('Urun', sort='y', title='Aşılar'),
+                y=alt.Y('Yetme Süresi (Gün)', title='Yetme Süresi (Gün)'),
+                color=alt.Color('Color', scale=None, legend=None),
+                tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim']
+            ).properties(
+                height=400
+            ).interactive()
+            
+            st.altair_chart(chart, use_container_width=True)
+            # ---------------------------------------------------
+
+            # Tablo Renklendirme ve Gösterimi
             def highlight_yetme_suresi(val):
                 if not isinstance(val, (int, float)): return ''
                 if val < 15: return 'background-color: #ff4b4b; color: white'
@@ -333,13 +365,6 @@ if tuketim_file and stok_file:
             
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
             
-            # --- YENİ EKLENEN GRAFİK ---
-            st.markdown("### 📈 Stok ve Tüketim Karşılaştırması")
-            # Grafiği çizmek için df_genel'i kullanıyoruz (styled_df sadece tablo gösterimi içindir)
-            chart_data = df_genel.set_index('Urun')[['İl Geneli Stok', 'Toplam Tüketim']]
-            st.bar_chart(chart_data)
-            # ---------------------------
-
             c7, c8 = st.columns(2)
             with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
             with c8: st.download_button("📥 İl Geneli PDF", to_pdf(df_genel, "Il Geneli Stok ve Tuketim"), "il_geneli_ozet.pdf")
