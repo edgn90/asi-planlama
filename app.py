@@ -316,14 +316,18 @@ if tuketim_file and stok_file:
             
             df_genel = df_genel[cols_order]
 
-            # --- YENİ GRAFİK: YETME SÜRESİ ANALİZİ (RENKLİ) ---
+            # --- YENİ GRAFİK: YETME SÜRESİ ANALİZİ (180 GÜN SINIRLI) ---
             st.markdown("### ⏳ Aşı Bazlı Yetme Süresi Analizi")
-            st.caption("Hangi aşının kaç gün yeteceği aşağıda gösterilmiştir. Renkler kritiklik düzeyini belirtir.")
+            st.caption("Renkler stok yeterlilik durumunu gösterir. (Yeşil: Güvenli, Kırmızı: Kritik). Çubuklar maksimum 180 gün ile sınırlandırılmıştır; gerçek değer için fareyle üzerine geliniz.")
             
-            # Grafik Verisi Hazırlama
             chart_df = df_genel.copy()
             
-            # Renk kodu atama fonksiyonu (Altair için)
+            # Görselleştirme için 180 ile sınırla (Capping)
+            chart_df['Visual_Value'] = chart_df['Yetme Süresi (Gün)'].apply(lambda x: 180 if x > 180 else x)
+            # Etiket oluştur (180'den büyükse 180+ yaz)
+            chart_df['Label'] = chart_df['Yetme Süresi (Gün)'].apply(lambda x: "180+" if x > 180 else f"{x:.1f}")
+
+            # Renk kodu
             def get_chart_color(val):
                 if val < 15: return '#ff4b4b'   # Kırmızı
                 elif val < 30: return '#ffa500' # Turuncu
@@ -332,20 +336,28 @@ if tuketim_file and stok_file:
             
             chart_df['Color'] = chart_df['Yetme Süresi (Gün)'].apply(get_chart_color)
             
-            # Altair Grafik Çizimi
-            chart = alt.Chart(chart_df).mark_bar().encode(
-                x=alt.X('Urun', sort='y', title='Aşılar'),
-                y=alt.Y('Yetme Süresi (Gün)', title='Yetme Süresi (Gün)'),
-                color=alt.Color('Color', scale=None, legend=None),
-                tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim']
-            ).properties(
-                height=400
-            ).interactive()
+            # Altair Grafik (Katmanlı Yapı: Bar + Text)
+            base = alt.Chart(chart_df).encode(
+                x=alt.X('Urun', sort='-y', title='Aşılar'),
+                tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim'] # Tooltip orijinal değeri gösterir
+            )
+
+            bars = base.mark_bar().encode(
+                y=alt.Y('Visual_Value', title='Yetme Süresi (Gün) [Maks 180]'),
+                color=alt.Color('Color', scale=None, legend=None)
+            )
+
+            text = base.mark_text(align='center', baseline='bottom', dy=-5).encode(
+                y='Visual_Value',
+                text='Label'
+            )
+
+            chart = (bars + text).properties(height=400).interactive()
             
             st.altair_chart(chart, use_container_width=True)
             # ---------------------------------------------------
 
-            # Tablo Renklendirme ve Gösterimi
+            # Tablo Renklendirme
             def highlight_yetme_suresi(val):
                 if not isinstance(val, (int, float)): return ''
                 if val < 15: return 'background-color: #ff4b4b; color: white'
