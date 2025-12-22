@@ -176,7 +176,7 @@ if tuketim_file and stok_file:
         df_s_saha = df_raw_s[~mask_ism_stok].copy()
         df_t_saha = df_raw_t[~mask_ism_tuketim].copy()
 
-        # ANA DEPO VERİLERİ (Sadece 4. Sekme için)
+        # ANA DEPO VERİLERİ
         df_s_ism = df_raw_s[mask_ism_stok].copy()
         df_t_ism = df_raw_t[mask_ism_tuketim].copy()
 
@@ -196,7 +196,7 @@ if tuketim_file and stok_file:
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
         res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
 
-        # --- DURUM BELİRLEME (GÜNCELLENDİ: TSM HARIÇ) ---
+        # --- DURUM BELİRLEME (TSM HARIÇ) ---
         def get_durum(row):
             if row['Yetme_Suresi'] < kritik_esik:
                 return "🚨 KRİTİK"
@@ -204,9 +204,6 @@ if tuketim_file and stok_file:
             tip_str = str(row['Tip']).upper()
             
             if row['Yetme_Suresi'] > asiri_esik:
-                # İSM zaten genel filtreden elendi.
-                # TSM'ler de depo olduğu için "AŞIRI" olarak işaretleme.
-                # Sadece ASM ve SON KULLANICI'yı denetle.
                 if any(x in tip_str for x in ['ASM', 'SON KULLANICI']):
                     return "⚠️ AŞIRI"
             
@@ -336,6 +333,13 @@ if tuketim_file and stok_file:
             
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
             
+            # --- YENİ EKLENEN GRAFİK ---
+            st.markdown("### 📈 Stok ve Tüketim Karşılaştırması")
+            # Grafiği çizmek için df_genel'i kullanıyoruz (styled_df sadece tablo gösterimi içindir)
+            chart_data = df_genel.set_index('Urun')[['İl Geneli Stok', 'Toplam Tüketim']]
+            st.bar_chart(chart_data)
+            # ---------------------------
+
             c7, c8 = st.columns(2)
             with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
             with c8: st.download_button("📥 İl Geneli PDF", to_pdf(df_genel, "Il Geneli Stok ve Tuketim"), "il_geneli_ozet.pdf")
