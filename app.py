@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import altair as alt
 from datetime import datetime
 import io
 from fpdf import FPDF
@@ -147,6 +146,7 @@ if tuketim_file and stok_file:
         df_raw_s = smart_fix_columns(df_raw_s)
         df_raw_t = smart_fix_columns(df_raw_t)
         
+        # İsim eşitlemesi
         if 'BIRIM ADI' in df_raw_s.columns:
              df_raw_s.rename(columns={'BIRIM ADI': 'BIRIM'}, inplace=True)
 
@@ -168,6 +168,7 @@ if tuketim_file and stok_file:
         # --- KRİTİK AYRIŞTIRMA (ANA DEPO FİLTRESİ) ---
         mask_ism_stok = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
                         (df_raw_s['BIRIM'].str.contains('ISM', case=False, na=False))
+        
         mask_ism_tuketim = (df_raw_t['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
                            (df_raw_t['BIRIM'].str.contains('ISM', case=False, na=False))
 
@@ -175,11 +176,11 @@ if tuketim_file and stok_file:
         df_s_saha = df_raw_s[~mask_ism_stok].copy()
         df_t_saha = df_raw_t[~mask_ism_tuketim].copy()
 
-        # ANA DEPO VERİLERİ
+        # ANA DEPO VERİLERİ (Sadece 4. Sekme için)
         df_s_ism = df_raw_s[mask_ism_stok].copy()
         df_t_ism = df_raw_t[mask_ism_tuketim].copy()
 
-        # --- MERGE VE HESAPLAMA (SADECE SAHA VERİSİ) ---
+        # --- MERGE VE HESAPLAMA (SADECE SAHA VERİSİ İLE) ---
         df_c = df_t_saha.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Zayi']
         
@@ -195,9 +196,20 @@ if tuketim_file and stok_file:
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
         res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
 
+        # --- DURUM BELİRLEME (GÜNCELLENDİ: TSM HARIÇ) ---
         def get_durum(row):
-            if row['Yetme_Suresi'] < kritik_esik: return "🚨 KRİTİK"
-            if row['Yetme_Suresi'] > asiri_esik: return "⚠️ AŞIRI"
+            if row['Yetme_Suresi'] < kritik_esik:
+                return "🚨 KRİTİK"
+            
+            tip_str = str(row['Tip']).upper()
+            
+            if row['Yetme_Suresi'] > asiri_esik:
+                # İSM zaten genel filtreden elendi.
+                # TSM'ler de depo olduğu için "AŞIRI" olarak işaretleme.
+                # Sadece ASM ve SON KULLANICI'yı denetle.
+                if any(x in tip_str for x in ['ASM', 'SON KULLANICI']):
+                    return "⚠️ AŞIRI"
+            
             return "✅ Yeterli"
 
         res_df['Durum'] = res_df.apply(get_durum, axis=1)
@@ -206,15 +218,17 @@ if tuketim_file and stok_file:
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
         sec_asi = st.sidebar.multiselect("💉 Aşı Filtrele", options=sorted(res_df['Urun'].unique()))
         
+        # --- FİLTRE UYGULAMA ---
         df_f = res_df.copy()
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- ANA EKRAN ---
+        # --- ANA EKRAN GÖRÜNÜMÜ ---
         st.markdown("---")
         if s_tarih:
             st.info(f"📅 **Dönemsel Tüketim Raporu:** {s_tarih} - {b_tarih} ({oto_gun_sayisi} Gün)")
 
+        # Metrikler
         toplam_sevk = int(df_f[df_f['Gonderilecek'] > 0]['Gonderilecek'].sum())
         kritik_sayisi = len(df_f[df_f['Durum'] == "🚨 KRİTİK"])
         asiri_sayisi = len(df_f[df_f['Durum'] == "⚠️ AŞIRI"])
@@ -228,6 +242,7 @@ if tuketim_file and stok_file:
         
         st.markdown("---")
 
+        # --- 5 SEKMELİ YAPI ---
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "📦 Sevkiyat Planı", 
             "⚠️ Fazla Stok Yönetimi", 
@@ -248,7 +263,7 @@ if tuketim_file and stok_file:
             with c2: st.download_button("📥 Sevkiyat PDF", to_pdf(f1_sevk, "Sevkiyat Plani"), "sevkiyat_plani.pdf")
 
         with tab2:
-            st.caption(f"Aşağıdaki liste, {asiri_esik} günden fazla stoğu bulunan ve 'Aşırı' olarak işaretlenen kurumları içerir.")
+            st.caption(f"Aşağıdaki liste, {asiri_esik} günden fazla stoğu bulunan ve 'Aşırı' olarak işaretlenen **ASM ve Son Kullanıcı** birimlerini içerir. (TSM ve İSM depoları hariç tutulmuştur)")
             f1_asiri = df_f[df_f['Durum'] == "⚠️ AŞIRI"].copy().sort_values('Yetme_Suresi', ascending=False)
             st.dataframe(f1_asiri[['Ilce', 'Birim', 'Urun', 'Stok', 'Yetme_Suresi']], use_container_width=True)
             c3, c4 = st.columns(2)
@@ -273,8 +288,7 @@ if tuketim_file and stok_file:
             grp_tuketim_saha = df_t_saha.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
             grp_stok_saha = df_s_saha.groupby('ÜRÜN TANIMI')['Stok'].sum()
             grp_stok_ism = df_s_ism.groupby('ÜRÜN TANIMI')['Stok'].sum()
-            grp_tuketim_ism = df_t_ism.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
-            
+            grp_tuketim_ism = df_t_ism.groupby('ÜRÜN TANIMI')['Tuketim'].sum() 
             grp_tuketim_total = grp_tuketim_saha.add(grp_tuketim_ism, fill_value=0)
             
             all_vaccines = grp_stok_saha.index.union(grp_stok_ism.index).union(grp_tuketim_total.index)
@@ -288,6 +302,7 @@ if tuketim_file and stok_file:
             
             df_genel = df_genel.fillna(0)
             df_genel['İl Geneli Stok'] = df_genel['İl Ana Depo (ISM)'] + df_genel['Saha (TSM, ASM, Son)']
+            
             df_genel['Günlük ortalama tüketim'] = (df_genel['Toplam Tüketim'] / oto_gun_sayisi).round(2)
             df_genel['Yetme Süresi (Gün)'] = df_genel.apply(
                 lambda r: round(r['İl Geneli Stok'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
@@ -301,30 +316,6 @@ if tuketim_file and stok_file:
                  df_genel.rename(columns={df_genel.columns[0]: 'Urun'}, inplace=True)
             
             df_genel = df_genel[cols_order]
-
-            # --- GRAFİK ALANI ---
-            st.markdown("#### 📉 Grafiksel Durum Analizi (Yetme Süresi)")
-            
-            chart_data = df_genel.copy()
-            chart_data['Gorsel_Sure'] = chart_data['Yetme Süresi (Gün)'].apply(lambda x: 180 if x > 180 else x)
-            
-            def get_color(val):
-                if val < 15: return '#ff4b4b' 
-                if val < 30: return '#ffa500' 
-                if val < 60: return '#ffe066' 
-                return '#90ee90'
-            
-            chart_data['Color'] = chart_data['Yetme Süresi (Gün)'].apply(get_color)
-
-            chart = alt.Chart(chart_data).mark_bar().encode(
-                x=alt.X('Urun', sort='-y', title='Ürün'),
-                y=alt.Y('Gorsel_Sure', title='Yetme Süresi (Gün) - (Maks 180+)'),
-                color=alt.Color('Color', scale=None, legend=None),
-                tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim']
-            ).properties(height=400)
-            
-            st.altair_chart(chart, use_container_width=True)
-            st.markdown("---")
 
             def highlight_yetme_suresi(val):
                 if not isinstance(val, (int, float)): return ''
@@ -363,7 +354,6 @@ if tuketim_file and stok_file:
             df_zayi = df_f.copy()
             
             if analiz_turu == "Sadece Tekli Doz Aşılar (Kritik Analiz)":
-                coklu_dozlar = ['BCG', 'ORAL POLIO', 'PPD', 'KIZAMIK', 'KIZAMIKCIK']
                 df_zayi = df_zayi[~df_zayi['Urun'].str.upper().str.contains('BCG|POLIO|PPD', regex=True)]
 
             zayi_ozet = df_zayi.groupby('Ilce').agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
