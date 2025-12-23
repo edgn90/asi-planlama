@@ -267,6 +267,27 @@ if tuketim_file and stok_file:
             c3, c4 = st.columns(2)
             with c3: st.download_button("📥 İade Excel", to_excel(f1_asiri), "asiri_stok.xlsx")
             with c4: st.download_button("📥 İade PDF", to_pdf(f1_asiri, "Asiri Stok"), "asiri_stok.pdf")
+            
+            # --- YENİ EKLENEN ÖLÜ STOK TABLOSU ---
+            st.markdown("---")
+            st.subheader("🕸️ Ölü Stok (Hiç Tüketimi Olmayan)")
+            st.caption("Aşağıdaki liste, stoğu bulunan ancak seçilen dönemde **hiç tüketim yapmamış (0 Doz)** ASM ve Son Kullanıcı birimlerini içerir.")
+            
+            # Ölü Stok Filtresi: Stok > 0 VE Tüketim == 0 VE (ASM veya SON KULLANICI)
+            f1_olu = df_f[
+                (df_f['Stok'] > 0) & 
+                (df_f['Tuketim'] == 0) &
+                (df_f['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['ASM', 'SON KULLANICI'])))
+            ].copy().sort_values('Stok', ascending=False)
+            
+            if not f1_olu.empty:
+                st.dataframe(f1_olu[['Ilce', 'Birim', 'Urun', 'Stok']], use_container_width=True)
+                c_olu1, c_olu2 = st.columns(2)
+                with c_olu1: st.download_button("📥 Ölü Stok Excel", to_excel(f1_olu), "olu_stok.xlsx")
+                with c_olu2: st.download_button("📥 Ölü Stok PDF", to_pdf(f1_olu, "Olu Stok"), "olu_stok.pdf")
+            else:
+                st.success("Tebrikler! Ölü stok (hareketsiz ürün) bulunamadı.")
+            # -------------------------------------
 
         with tab3:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
@@ -283,7 +304,6 @@ if tuketim_file and stok_file:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
             st.caption("Bu tablo; Saha (ASM/TSM) verileri ile İl Ana Depo (İSM) verilerinin birleşimidir.")
             
-            # Veri Hazırlama
             grp_tuketim_saha = df_t_saha.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
             grp_stok_saha = df_s_saha.groupby('ÜRÜN TANIMI')['Stok'].sum()
             grp_stok_ism = df_s_ism.groupby('ÜRÜN TANIMI')['Stok'].sum()
@@ -316,30 +336,25 @@ if tuketim_file and stok_file:
             
             df_genel = df_genel[cols_order]
 
-            # --- YENİ GRAFİK: YETME SÜRESİ ANALİZİ (180 GÜN SINIRLI) ---
+            # --- GRAFİK (180 Gün Sınırı + Hover Değeri) ---
             st.markdown("### ⏳ Aşı Bazlı Yetme Süresi Analizi")
             st.caption("Renkler stok yeterlilik durumunu gösterir. (Yeşil: Güvenli, Kırmızı: Kritik). Çubuklar maksimum 180 gün ile sınırlandırılmıştır; gerçek değer için fareyle üzerine geliniz.")
             
             chart_df = df_genel.copy()
-            
-            # Görselleştirme için 180 ile sınırla (Capping)
             chart_df['Visual_Value'] = chart_df['Yetme Süresi (Gün)'].apply(lambda x: 180 if x > 180 else x)
-            # Etiket oluştur (180'den büyükse 180+ yaz)
             chart_df['Label'] = chart_df['Yetme Süresi (Gün)'].apply(lambda x: "180+" if x > 180 else f"{x:.1f}")
 
-            # Renk kodu
             def get_chart_color(val):
-                if val < 15: return '#ff4b4b'   # Kırmızı
-                elif val < 30: return '#ffa500' # Turuncu
-                elif val < 60: return '#ffe066' # Sarı
-                else: return '#90ee90'          # Yeşil
+                if val < 15: return '#ff4b4b'
+                elif val < 30: return '#ffa500'
+                elif val < 60: return '#ffe066'
+                else: return '#90ee90'
             
             chart_df['Color'] = chart_df['Yetme Süresi (Gün)'].apply(get_chart_color)
             
-            # Altair Grafik (Katmanlı Yapı: Bar + Text)
             base = alt.Chart(chart_df).encode(
                 x=alt.X('Urun', sort='-y', title='Aşılar'),
-                tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim'] # Tooltip orijinal değeri gösterir
+                tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim']
             )
 
             bars = base.mark_bar().encode(
@@ -353,11 +368,9 @@ if tuketim_file and stok_file:
             )
 
             chart = (bars + text).properties(height=400).interactive()
-            
             st.altair_chart(chart, use_container_width=True)
-            # ---------------------------------------------------
+            # ---------------------------------------------
 
-            # Tablo Renklendirme
             def highlight_yetme_suresi(val):
                 if not isinstance(val, (int, float)): return ''
                 if val < 15: return 'background-color: #ff4b4b; color: white'
