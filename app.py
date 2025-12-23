@@ -240,7 +240,7 @@ if tuketim_file and stok_file:
         
         st.markdown("---")
 
-        # --- 5 SEKMELİ YAPI (GÜNCELLENEN SEKME İSMİ) ---
+        # --- 5 SEKMELİ YAPI ---
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "📦 Sevkiyat Planı", 
             "⚠️ Fazla ve Ölü Stok", 
@@ -335,7 +335,6 @@ if tuketim_file and stok_file:
             
             df_genel = df_genel[cols_order]
 
-            # --- GRAFİK (180 Gün Sınırı + Hover Değeri) ---
             st.markdown("### ⏳ Aşı Bazlı Yetme Süresi Analizi")
             st.caption("Renkler stok yeterlilik durumunu gösterir. (Yeşil: Güvenli, Kırmızı: Kritik). Çubuklar maksimum 180 gün ile sınırlandırılmıştır; gerçek değer için fareyle üzerine geliniz.")
             
@@ -368,8 +367,7 @@ if tuketim_file and stok_file:
 
             chart = (bars + text).properties(height=400).interactive()
             st.altair_chart(chart, use_container_width=True)
-            # ---------------------------------------------
-
+            
             def highlight_yetme_suresi(val):
                 if not isinstance(val, (int, float)): return ''
                 if val < 15: return 'background-color: #ff4b4b; color: white'
@@ -408,6 +406,26 @@ if tuketim_file and stok_file:
             
             if analiz_turu == "Sadece Tekli Doz Aşılar (Kritik Analiz)":
                 df_zayi = df_zayi[~df_zayi['Urun'].str.upper().str.contains('BCG|POLIO|PPD', regex=True)]
+
+            # --- ISI HARİTASI (HEATMAP) ---
+            st.markdown("### 🔥 Zayi Yoğunluk Haritası")
+            st.caption("Renk yoğunluğu (kırmızı), ilgili ilçede ilgili aşının zayi miktarının yüksek olduğunu gösterir.")
+            
+            # Heatmap için veri hazırlığı (İlçe x Aşı -> Toplam Zayi)
+            heatmap_data = df_zayi.groupby(['Ilce', 'Urun'])['Zayi'].sum().reset_index()
+            
+            # Altair Heatmap
+            heatmap = alt.Chart(heatmap_data).mark_rect().encode(
+                x=alt.X('Urun:O', title='Aşılar'),
+                y=alt.Y('Ilce:O', title='İlçeler'),
+                color=alt.Color('Zayi:Q', scale=alt.Scale(scheme='reds'), title='Zayi Miktarı'),
+                tooltip=['Ilce', 'Urun', 'Zayi']
+            ).properties(
+                height=600  # İlçe sayısı çok olduğu için boyu uzattık
+            ).interactive()
+            
+            st.altair_chart(heatmap, use_container_width=True)
+            # --------------------------------
 
             zayi_ozet = df_zayi.groupby('Ilce').agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
             zayi_ozet['Zayi Oranı (%)'] = zayi_ozet.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
