@@ -240,10 +240,10 @@ if tuketim_file and stok_file:
         
         st.markdown("---")
 
-        # --- 5 SEKMELİ YAPI ---
+        # --- 5 SEKMELİ YAPI (GÜNCELLENEN SEKME İSMİ) ---
         tab1, tab2, tab3, tab4, tab5 = st.tabs([
             "📦 Sevkiyat Planı", 
-            "⚠️ Fazla Stok Yönetimi", 
+            "⚠️ Fazla ve Ölü Stok", 
             "📍 İlçe Bazlı Özet", 
             "📊 İl Geneli",
             "📉 Zayi ve Verimlilik Analizi"
@@ -268,12 +268,11 @@ if tuketim_file and stok_file:
             with c3: st.download_button("📥 İade Excel", to_excel(f1_asiri), "asiri_stok.xlsx")
             with c4: st.download_button("📥 İade PDF", to_pdf(f1_asiri, "Asiri Stok"), "asiri_stok.pdf")
             
-            # --- YENİ EKLENEN ÖLÜ STOK TABLOSU ---
+            # --- ÖLÜ STOK TABLOSU ---
             st.markdown("---")
             st.subheader("🕸️ Ölü Stok (Hiç Tüketimi Olmayan)")
             st.caption("Aşağıdaki liste, stoğu bulunan ancak seçilen dönemde **hiç tüketim yapmamış (0 Doz)** ASM ve Son Kullanıcı birimlerini içerir.")
             
-            # Ölü Stok Filtresi: Stok > 0 VE Tüketim == 0 VE (ASM veya SON KULLANICI)
             f1_olu = df_f[
                 (df_f['Stok'] > 0) & 
                 (df_f['Tuketim'] == 0) &
