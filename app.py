@@ -5,6 +5,7 @@ from datetime import datetime
 import io
 from fpdf import FPDF
 import altair as alt
+import csv
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
@@ -14,6 +15,7 @@ st.title("💉 Akıllı Aşı Talep Tahmini ve Stok Yönetim Paneli")
 # --- YARDIMCI FONKSİYONLAR ---
 def clean_number(x):
     if isinstance(x, str):
+        # Tırnakları, noktaları ve virgülleri temizle
         return x.replace('.', '').replace(',', '').replace('"', '').strip()
     return x
 
@@ -104,20 +106,27 @@ if tuketim_file and stok_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
-        # --- CSV OKUMA ---
-        try:
-            tuketim_file.seek(0)
-            df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='utf-8')
-        except Exception:
-            tuketim_file.seek(0)
-            df_raw_t = pd.read_csv(tuketim_file, header=7, encoding='iso-8859-9')
+        # --- GÜÇLENDİRİLMİŞ CSV OKUMA (HATA TOLERANSLI) ---
+        def robust_read_csv(file, header_row):
+            """Farklı kodlamalar ve okuma yöntemleri deneyerek CSV okur."""
+            methods = [
+                {'encoding': 'utf-8', 'quoting': 0},  # Standart
+                {'encoding': 'iso-8859-9', 'quoting': 0}, # Türkçe Standart
+                {'encoding': 'iso-8859-9', 'quoting': 3, 'on_bad_lines': 'skip'}, # Tırnakları Yok Say (QUOTE_NONE)
+                {'encoding': 'utf-8', 'quoting': 3, 'on_bad_lines': 'skip', 'engine': 'python'} # Python motoruyla zorla
+            ]
             
-        try:
-            stok_file.seek(0)
-            df_raw_s = pd.read_csv(stok_file, header=3, encoding='utf-8')
-        except Exception:
-            stok_file.seek(0)
-            df_raw_s = pd.read_csv(stok_file, header=3, encoding='iso-8859-9')
+            for m in methods:
+                try:
+                    file.seek(0)
+                    kw = {k: v for k, v in m.items() if k != 'encoding'}
+                    return pd.read_csv(file, header=header_row, encoding=m['encoding'], **kw)
+                except Exception:
+                    continue
+            raise ValueError("Dosya okunamadı. Lütfen CSV formatını kontrol edin.")
+
+        df_raw_t = robust_read_csv(tuketim_file, 7)
+        df_raw_s = robust_read_csv(stok_file, 3)
         
         # Temizlik
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
@@ -128,6 +137,8 @@ if tuketim_file and stok_file:
             rename_map = {}
             for col in df.columns:
                 col_upper = col.upper()
+                col_clean = col.replace('"', '').strip() # Tırnak temizliği
+                
                 if 'ZAYI' in col_upper:
                     rename_map[col] = 'ZAYI'
                 elif col_upper.startswith('IL') and col_upper.endswith('E'): 
