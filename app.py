@@ -5,7 +5,7 @@ from datetime import datetime
 import io
 from fpdf import FPDF
 import altair as alt
-import csv
+import re
 
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
@@ -20,26 +20,42 @@ def clean_number(x):
     return x
 
 def get_dates_from_csv(file):
+    """
+    CSV dosyasının ilk satırlarından Başlangıç ve Bitiş tarihlerini okur.
+    Regex kullanarak delimiter bağımsız çalışır.
+    """
     try:
         file.seek(0)
-        lines = [file.readline().decode('iso-8859-9') for _ in range(15)]
+        # Önce utf-8 sonra iso-8859-9 dene
+        try:
+            lines = [file.readline().decode('utf-8') for _ in range(15)]
+        except:
+            file.seek(0)
+            lines = [file.readline().decode('iso-8859-9') for _ in range(15)]
+            
         file.seek(0)
         start_date, end_date = None, None
+        
+        # Tarih formatı: dd.mm.yyyy (Örn: 01.12.2025)
+        date_pattern = re.compile(r'\d{2}\.\d{2}\.\d{4}')
+        
         for line in lines:
             if "Baslangiç Tarihi" in line:
-                parts = line.split(',')
-                for p in parts:
-                    if "20" in p and "." in p: start_date = p.strip().replace('"', '')
+                match = date_pattern.search(line)
+                if match:
+                    start_date = match.group()
             if "Bitis Tarihi" in line:
-                parts = line.split(',')
-                for p in parts:
-                    if "20" in p and "." in p: end_date = p.strip().replace('"', '')
+                match = date_pattern.search(line)
+                if match:
+                    end_date = match.group()
+                    
         if start_date and end_date:
             d1 = datetime.strptime(start_date, "%d.%m.%Y")
             d2 = datetime.strptime(end_date, "%d.%m.%Y")
             diff = (d2 - d1).days + 1
             return diff, start_date, end_date
-    except:
+    except Exception as e:
+        # Hata durumunda varsayılan değerler
         pass
     return 91, None, None
 
@@ -106,14 +122,24 @@ if tuketim_file and stok_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
-        # --- GÜÇLENDİRİLMİŞ CSV OKUMA (HATA TOLERANSLI) ---
+        # --- GÜÇLENDİRİLMİŞ CSV OKUMA (HATA TOLERANSLI & AYIRICI BAĞIMSIZ) ---
         def robust_read_csv(file, header_row):
-            """Farklı kodlamalar ve okuma yöntemleri deneyerek CSV okur."""
+            """Farklı kodlamalar, ayırıcılar ve okuma yöntemleri deneyerek CSV okur."""
             methods = [
-                {'encoding': 'utf-8', 'quoting': 0},  # Standart
-                {'encoding': 'iso-8859-9', 'quoting': 0}, # Türkçe Standart
-                {'encoding': 'iso-8859-9', 'quoting': 3, 'on_bad_lines': 'skip'}, # Tırnakları Yok Say (QUOTE_NONE)
-                {'encoding': 'utf-8', 'quoting': 3, 'on_bad_lines': 'skip', 'engine': 'python'} # Python motoruyla zorla
+                # Önce noktalı virgül (yeni format) dene
+                {'encoding': 'iso-8859-9', 'sep': ';'},
+                {'encoding': 'utf-8', 'sep': ';'},
+                
+                # Sonra virgül (eski format) dene
+                {'encoding': 'utf-8', 'sep': ','},
+                {'encoding': 'iso-8859-9', 'sep': ','},
+                
+                # Hata toleranslı modlar
+                {'encoding': 'iso-8859-9', 'sep': ';', 'quoting': 3, 'on_bad_lines': 'skip'},
+                {'encoding': 'iso-8859-9', 'sep': ',', 'quoting': 3, 'on_bad_lines': 'skip'},
+                
+                # Python motoruyla zorla (en son çare)
+                {'encoding': 'utf-8', 'sep': None, 'engine': 'python'}
             ]
             
             for m in methods:
@@ -128,7 +154,7 @@ if tuketim_file and stok_file:
         df_raw_t = robust_read_csv(tuketim_file, 7)
         df_raw_s = robust_read_csv(stok_file, 3)
         
-        # Temizlik
+        # Temizlik (Boşlukları sil)
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
 
@@ -137,7 +163,7 @@ if tuketim_file and stok_file:
             rename_map = {}
             for col in df.columns:
                 col_upper = col.upper()
-                col_clean = col.replace('"', '').strip() # Tırnak temizliği
+                col_clean = col.replace('"', '').strip() 
                 
                 if 'ZAYI' in col_upper:
                     rename_map[col] = 'ZAYI'
@@ -297,7 +323,6 @@ if tuketim_file and stok_file:
                 with c_olu2: st.download_button("📥 Ölü Stok PDF", to_pdf(f1_olu, "Olu Stok"), "olu_stok.pdf")
             else:
                 st.success("Tebrikler! Ölü stok (hareketsiz ürün) bulunamadı.")
-            # -------------------------------------
 
         with tab3:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
@@ -379,7 +404,6 @@ if tuketim_file and stok_file:
 
             chart = (bars + text).properties(height=400).interactive()
             st.altair_chart(chart, use_container_width=True)
-            # ---------------------------------------------
 
             def highlight_yetme_suresi(val):
                 if not isinstance(val, (int, float)): return ''
