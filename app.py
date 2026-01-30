@@ -122,23 +122,23 @@ if tuketim_file and stok_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
-        # --- GÜÇLENDİRİLMİŞ CSV OKUMA (HATA TOLERANSLI & AYIRICI BAĞIMSIZ) ---
+        # --- GÜÇLENDİRİLMİŞ CSV OKUMA (Metin Bazlı - Hata Önleyici) ---
         def robust_read_csv(file, header_row):
-            """Farklı kodlamalar, ayırıcılar ve okuma yöntemleri deneyerek CSV okur."""
+            """
+            Farklı kodlamalar ve ayırıcılar deneyerek CSV okur.
+            ÖNEMLİ: dtype=str kullanarak sayıların bozulmasını (10 -> 10.0 -> 100) engeller.
+            """
             methods = [
-                # Önce noktalı virgül (yeni format) dene
+                # Önce noktalı virgül (yeni format)
                 {'encoding': 'iso-8859-9', 'sep': ';'},
                 {'encoding': 'utf-8', 'sep': ';'},
-                
-                # Sonra virgül (eski format) dene
+                # Sonra virgül (eski format)
                 {'encoding': 'utf-8', 'sep': ','},
                 {'encoding': 'iso-8859-9', 'sep': ','},
-                
                 # Hata toleranslı modlar
                 {'encoding': 'iso-8859-9', 'sep': ';', 'quoting': 3, 'on_bad_lines': 'skip'},
                 {'encoding': 'iso-8859-9', 'sep': ',', 'quoting': 3, 'on_bad_lines': 'skip'},
-                
-                # Python motoruyla zorla (en son çare)
+                # Python motoru
                 {'encoding': 'utf-8', 'sep': None, 'engine': 'python'}
             ]
             
@@ -146,7 +146,8 @@ if tuketim_file and stok_file:
                 try:
                     file.seek(0)
                     kw = {k: v for k, v in m.items() if k != 'encoding'}
-                    return pd.read_csv(file, header=header_row, encoding=m['encoding'], **kw)
+                    # dtype=str kritik öneme sahip
+                    return pd.read_csv(file, header=header_row, encoding=m['encoding'], dtype=str, **kw)
                 except Exception:
                     continue
             raise ValueError("Dosya okunamadı. Lütfen CSV formatını kontrol edin.")
@@ -154,7 +155,7 @@ if tuketim_file and stok_file:
         df_raw_t = robust_read_csv(tuketim_file, 7)
         df_raw_s = robust_read_csv(stok_file, 3)
         
-        # Temizlik (Boşlukları sil)
+        # Temizlik
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
 
@@ -163,8 +164,6 @@ if tuketim_file and stok_file:
             rename_map = {}
             for col in df.columns:
                 col_upper = col.upper()
-                col_clean = col.replace('"', '').strip() 
-                
                 if 'ZAYI' in col_upper:
                     rename_map[col] = 'ZAYI'
                 elif col_upper.startswith('IL') and col_upper.endswith('E'): 
@@ -192,7 +191,7 @@ if tuketim_file and stok_file:
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
         df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']].ffill()
         
-        # Sayısal Dönüşümler
+        # Sayısal Dönüşümler (Artık güvenli string temizliği yapılıyor)
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         
         if 'ZAYI' in df_raw_t.columns:
