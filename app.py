@@ -26,7 +26,6 @@ def get_dates_from_csv(file):
     """
     try:
         file.seek(0)
-        # Önce utf-8 sonra iso-8859-9 dene
         try:
             lines = [file.readline().decode('utf-8') for _ in range(15)]
         except:
@@ -35,8 +34,6 @@ def get_dates_from_csv(file):
             
         file.seek(0)
         start_date, end_date = None, None
-        
-        # Tarih formatı: dd.mm.yyyy (Örn: 01.12.2025)
         date_pattern = re.compile(r'\d{2}\.\d{2}\.\d{4}')
         
         for line in lines:
@@ -54,8 +51,7 @@ def get_dates_from_csv(file):
             d2 = datetime.strptime(end_date, "%d.%m.%Y")
             diff = (d2 - d1).days + 1
             return diff, start_date, end_date
-    except Exception as e:
-        # Hata durumunda varsayılan değerler
+    except Exception:
         pass
     return 91, None, None
 
@@ -122,23 +118,25 @@ if tuketim_file and stok_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
-        # --- GÜÇLENDİRİLMİŞ CSV OKUMA (Metin Bazlı - Hata Önleyici) ---
+        # --- GÜÇLENDİRİLMİŞ CSV OKUMA ---
         def robust_read_csv(file, header_row):
             """
-            Farklı kodlamalar ve ayırıcılar deneyerek CSV okur.
-            ÖNEMLİ: dtype=str kullanarak sayıların bozulmasını (10 -> 10.0 -> 100) engeller.
+            Farklı kodlamalar ve ayırıcılar dener.
+            Sütun sayısı kontrolü yaparak hatalı ayırıcıları eler.
             """
             methods = [
-                # Önce noktalı virgül (yeni format)
-                {'encoding': 'iso-8859-9', 'sep': ';'},
+                # 1. UTF-8 + Noktalı Virgül
                 {'encoding': 'utf-8', 'sep': ';'},
-                # Sonra virgül (eski format)
+                # 2. ISO-8859-9 + Noktalı Virgül
+                {'encoding': 'iso-8859-9', 'sep': ';'},
+                # 3. UTF-8 + Virgül
                 {'encoding': 'utf-8', 'sep': ','},
+                # 4. ISO-8859-9 + Virgül
                 {'encoding': 'iso-8859-9', 'sep': ','},
-                # Hata toleranslı modlar
+                # 5. Hata Toleranslı Modlar (Quote None)
                 {'encoding': 'iso-8859-9', 'sep': ';', 'quoting': 3, 'on_bad_lines': 'skip'},
                 {'encoding': 'iso-8859-9', 'sep': ',', 'quoting': 3, 'on_bad_lines': 'skip'},
-                # Python motoru
+                # 6. Python Engine (Son Çare)
                 {'encoding': 'utf-8', 'sep': None, 'engine': 'python'}
             ]
             
@@ -146,11 +144,20 @@ if tuketim_file and stok_file:
                 try:
                     file.seek(0)
                     kw = {k: v for k, v in m.items() if k != 'encoding'}
-                    # dtype=str kritik öneme sahip
-                    return pd.read_csv(file, header=header_row, encoding=m['encoding'], dtype=str, **kw)
+                    # dtype=str: Sayıları string olarak oku (10 -> 10.0 hatasını önler)
+                    df = pd.read_csv(file, header=header_row, encoding=m['encoding'], dtype=str, **kw)
+                    
+                    # KRİTİK KONTROL: Eğer dataframe tek sütunluysa yanlış ayırıcı seçilmiştir.
+                    if len(df.columns) < 2:
+                        continue
+                        
+                    return df
                 except Exception:
                     continue
-            raise ValueError("Dosya okunamadı. Lütfen CSV formatını kontrol edin.")
+            
+            # Hiçbiri çalışmazsa en son iso-8859-9 dene ve ne çıkarsa kabul et
+            file.seek(0)
+            return pd.read_csv(file, header=header_row, encoding='iso-8859-9', sep=';', dtype=str, on_bad_lines='skip')
 
         df_raw_t = robust_read_csv(tuketim_file, 7)
         df_raw_s = robust_read_csv(stok_file, 3)
@@ -164,9 +171,13 @@ if tuketim_file and stok_file:
             rename_map = {}
             for col in df.columns:
                 col_upper = col.upper()
+                # Tırnak temizliği
+                col_clean = col.replace('"', '').strip()
+                
                 if 'ZAYI' in col_upper:
                     rename_map[col] = 'ZAYI'
-                elif col_upper.startswith('IL') and col_upper.endswith('E'): 
+                # ILÇE Tespiti (IL veya İL ile başlayıp E ile bitenler)
+                elif (col_upper.startswith('IL') or col_upper.startswith('İL')) and col_upper.endswith('E'): 
                     rename_map[col] = 'ILÇE'
                 elif 'BIRIM' in col_upper and 'ADI' in col_upper:
                     rename_map[col] = 'BIRIM ADI'
@@ -191,7 +202,7 @@ if tuketim_file and stok_file:
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
         df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']].ffill()
         
-        # Sayısal Dönüşümler (Artık güvenli string temizliği yapılıyor)
+        # Sayısal Dönüşümler
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         
         if 'ZAYI' in df_raw_t.columns:
