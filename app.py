@@ -125,18 +125,12 @@ if tuketim_file and stok_file:
             Sütun sayısı kontrolü yaparak hatalı ayırıcıları eler.
             """
             methods = [
-                # 1. UTF-8 + Noktalı Virgül
                 {'encoding': 'utf-8', 'sep': ';'},
-                # 2. ISO-8859-9 + Noktalı Virgül
                 {'encoding': 'iso-8859-9', 'sep': ';'},
-                # 3. UTF-8 + Virgül
                 {'encoding': 'utf-8', 'sep': ','},
-                # 4. ISO-8859-9 + Virgül
                 {'encoding': 'iso-8859-9', 'sep': ','},
-                # 5. Hata Toleranslı Modlar (Quote None)
                 {'encoding': 'iso-8859-9', 'sep': ';', 'quoting': 3, 'on_bad_lines': 'skip'},
                 {'encoding': 'iso-8859-9', 'sep': ',', 'quoting': 3, 'on_bad_lines': 'skip'},
-                # 6. Python Engine (Son Çare)
                 {'encoding': 'utf-8', 'sep': None, 'engine': 'python'}
             ]
             
@@ -144,10 +138,8 @@ if tuketim_file and stok_file:
                 try:
                     file.seek(0)
                     kw = {k: v for k, v in m.items() if k != 'encoding'}
-                    # dtype=str: Sayıları string olarak oku (10 -> 10.0 hatasını önler)
                     df = pd.read_csv(file, header=header_row, encoding=m['encoding'], dtype=str, **kw)
                     
-                    # KRİTİK KONTROL: Eğer dataframe tek sütunluysa yanlış ayırıcı seçilmiştir.
                     if len(df.columns) < 2:
                         continue
                         
@@ -155,7 +147,6 @@ if tuketim_file and stok_file:
                 except Exception:
                     continue
             
-            # Hiçbiri çalışmazsa en son iso-8859-9 dene ve ne çıkarsa kabul et
             file.seek(0)
             return pd.read_csv(file, header=header_row, encoding='iso-8859-9', sep=';', dtype=str, on_bad_lines='skip')
 
@@ -171,12 +162,10 @@ if tuketim_file and stok_file:
             rename_map = {}
             for col in df.columns:
                 col_upper = col.upper()
-                # Tırnak temizliği
                 col_clean = col.replace('"', '').strip()
                 
                 if 'ZAYI' in col_upper:
                     rename_map[col] = 'ZAYI'
-                # ILÇE Tespiti (IL veya İL ile başlayıp E ile bitenler)
                 elif (col_upper.startswith('IL') or col_upper.startswith('İL')) and col_upper.endswith('E'): 
                     rename_map[col] = 'ILÇE'
                 elif 'BIRIM' in col_upper and 'ADI' in col_upper:
@@ -213,7 +202,7 @@ if tuketim_file and stok_file:
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
 
-        # --- KRİTİK AYRIŞTIRMA (ANA DEPO FİLTRESİ) ---
+        # --- KRİTİK AYRIŞTIRMA ---
         mask_ism_stok = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
                         (df_raw_s['BIRIM'].str.contains('ISM', case=False, na=False))
         
@@ -228,7 +217,7 @@ if tuketim_file and stok_file:
         df_s_ism = df_raw_s[mask_ism_stok].copy()
         df_t_ism = df_raw_t[mask_ism_tuketim].copy()
 
-        # --- MERGE VE HESAPLAMA (SADECE SAHA VERİSİ İLE) ---
+        # --- MERGE VE HESAPLAMA ---
         df_c = df_t_saha.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Zayi']
         
@@ -244,17 +233,14 @@ if tuketim_file and stok_file:
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
         res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
 
-        # --- DURUM BELİRLEME (TSM HARIÇ) ---
+        # --- DURUM BELİRLEME ---
         def get_durum(row):
             if row['Yetme_Suresi'] < kritik_esik:
                 return "🚨 KRİTİK"
-            
             tip_str = str(row['Tip']).upper()
-            
             if row['Yetme_Suresi'] > asiri_esik:
                 if any(x in tip_str for x in ['ASM', 'SON KULLANICI']):
                     return "⚠️ AŞIRI"
-            
             return "✅ Yeterli"
 
         res_df['Durum'] = res_df.apply(get_durum, axis=1)
@@ -339,11 +325,26 @@ if tuketim_file and stok_file:
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
             f2_visible = df_i[df_i['Gonderilecek'] > 0].copy().sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
+            
+            # --- TOPLAM SATIRI EKLEME ---
+            if not f2_visible.empty:
+                sum_row = pd.DataFrame({
+                    'Ilce': ['TOPLAM'],
+                    'Urun': ['-'],
+                    'Tuketim': [f2_visible['Tuketim'].sum()],
+                    'Stok': [f2_visible['Stok'].sum()],
+                    'Ihtiyac': [f2_visible['Ihtiyac'].sum()],
+                    'Gonderilecek': [f2_visible['Gonderilecek'].sum()]
+                })
+                f2_display = pd.concat([f2_visible, sum_row], ignore_index=True)
+            else:
+                f2_display = f2_visible
+
             st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
-            st.dataframe(f2_visible, use_container_width=True)
+            st.dataframe(f2_display, use_container_width=True)
             c5, c6 = st.columns(2)
-            with c5: st.download_button("📥 İlçe Excel", to_excel(f2_visible), "ilce_ozet.xlsx")
-            with c6: st.download_button("📥 İlçe PDF", to_pdf(f2_visible, "Ilce Ozet"), "ilce_ozet.pdf")
+            with c5: st.download_button("📥 İlçe Excel", to_excel(f2_display), "ilce_ozet.xlsx")
+            with c6: st.download_button("📥 İlçe PDF", to_pdf(f2_display, "Ilce Ozet"), "ilce_ozet.pdf")
         
         with tab4:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
@@ -381,7 +382,7 @@ if tuketim_file and stok_file:
             
             df_genel = df_genel[cols_order]
 
-            # --- GRAFİK (180 Gün Sınırı + Hover Değeri) ---
+            # --- GRAFİK ---
             st.markdown("### ⏳ Aşı Bazlı Yetme Süresi Analizi")
             st.caption("Renkler stok yeterlilik durumunu gösterir. (Yeşil: Güvenli, Kırmızı: Kritik). Çubuklar maksimum 180 gün ile sınırlandırılmıştır; gerçek değer için fareyle üzerine geliniz.")
             
