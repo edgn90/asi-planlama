@@ -481,6 +481,17 @@ if tuketim_file and stok_file:
             c9, c10 = st.columns(2)
             with c9: st.download_button("📥 Zayi Analizi Excel", to_excel(zayi_ozet), "zayi_analizi.xlsx")
             with c10: st.download_button("📥 Zayi Analizi PDF", to_pdf(zayi_ozet, "Zayi Analizi"), "zayi_analizi.pdf")
+            
+            # --- YENİ DETAYLI RAPOR (İLÇE VE AŞI KIRILIMI) ---
+            st.markdown("---")
+            st.markdown("### 📥 Detaylı Zayi Raporu (İlçe + Aşı Bazlı)")
+            st.caption("Aşağıdaki butonu kullanarak, her bir ilçedeki her bir aşı çeşidi için ayrı ayrı tüketim ve zayi miktarlarını içeren detaylı listeyi indirebilirsiniz.")
+            
+            zayi_detay = df_zayi.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
+            zayi_detay['Zayi Oranı (%)'] = zayi_detay.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
+            zayi_detay = zayi_detay.sort_values(['Ilce', 'Zayi'], ascending=[True, False])
+            
+            st.download_button("📥 Detaylı Zayi Raporu İndir (İlçe + Aşı)", to_excel(zayi_detay), "detayli_zayi_analizi.xlsx")
 
     except Exception as e:
         st.error(f"Hata: {e}")
