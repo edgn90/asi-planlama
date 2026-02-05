@@ -373,9 +373,14 @@ if tuketim_file and stok_file:
                 lambda r: round(r['İl Geneli Stok'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
             )
             
+            # --- YENİ EKLENEN: İL ANA DEPO YETME SÜRESİ ---
+            df_genel['İl Ana Depo Yetme Süresi (Gün)'] = df_genel.apply(
+                lambda r: round(r['İl Ana Depo (ISM)'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
+            )
+
             df_genel = df_genel.reset_index()
-            cols_order = ['Urun', 'İl Geneli Stok', 'İl Ana Depo (ISM)', 'Saha (TSM, ASM, Son)', 
-                          'Toplam Tüketim', 'Günlük ortalama tüketim', 'Yetme Süresi (Gün)']
+            cols_order = ['Urun', 'İl Geneli Stok', 'İl Ana Depo (ISM)', 'İl Ana Depo Yetme Süresi (Gün)', 
+                          'Saha (TSM, ASM, Son)', 'Toplam Tüketim', 'Günlük ortalama tüketim', 'Yetme Süresi (Gün)']
             
             if 'Urun' not in df_genel.columns:
                  df_genel.rename(columns={df_genel.columns[0]: 'Urun'}, inplace=True)
@@ -423,10 +428,11 @@ if tuketim_file and stok_file:
                 elif val < 60: return 'background-color: #ffe066; color: black'
                 else: return 'background-color: #90ee90; color: black'
 
-            styled_df = df_genel.style.map(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)'])
+            styled_df = df_genel.style.map(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)', 'İl Ana Depo Yetme Süresi (Gün)'])
             styled_df = styled_df.format({
                 "Günlük ortalama tüketim": "{:.2f}", 
                 "Yetme Süresi (Gün)": "{:.1f}",
+                "İl Ana Depo Yetme Süresi (Gün)": "{:.1f}",
                 "İl Geneli Stok": "{:.0f}",
                 "İl Ana Depo (ISM)": "{:.0f}",
                 "Saha (TSM, ASM, Son)": "{:.0f}",
@@ -482,7 +488,7 @@ if tuketim_file and stok_file:
             with c9: st.download_button("📥 Zayi Analizi Excel", to_excel(zayi_ozet), "zayi_analizi.xlsx")
             with c10: st.download_button("📥 Zayi Analizi PDF", to_pdf(zayi_ozet, "Zayi Analizi"), "zayi_analizi.pdf")
             
-            # --- YENİ DETAYLI RAPOR (İLÇE VE AŞI KIRILIMI) ---
+            # --- DETAYLI ZAYİ RAPORU İNDİRME ---
             st.markdown("---")
             st.markdown("### 📥 Detaylı Zayi Raporu (İlçe + Aşı Bazlı)")
             st.caption("Aşağıdaki butonu kullanarak, her bir ilçedeki her bir aşı çeşidi için ayrı ayrı tüketim ve zayi miktarlarını içeren detaylı listeyi indirebilirsiniz.")
