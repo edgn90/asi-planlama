@@ -193,7 +193,37 @@ if tuketim_file and stok_file:
         df_s_grp.columns = ['Ilce', 'Birim', 'Urun', 'Tip', 'Stok']
         
         res_df = pd.merge(df_c, df_s_grp, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
-        res_df['Tip'] = res_df['Tip'].replace(0, 'Bilinmiyor')
+        
+        # --- EKSİK TİPLERİ ONARMA (GÜNCELLENMİŞ VERSİYON) ---
+        def infer_tip(row):
+            # Eğer Tip zaten varsa (0 veya Bilinmiyor değilse) dokunma
+            current_tip = str(row['Tip']).upper()
+            if row['Tip'] != 0 and row['Tip'] != 'Bilinmiyor' and current_tip != 'NAN':
+                return row['Tip']
+            
+            # Tip yoksa isminden tahmin et
+            name = str(row['Birim']).upper()
+            
+            # 1. Öncelik: ASM'ler
+            if 'ASM' in name or 'AILE SAGLIGI' in name:
+                return 'ASM'
+            
+            # 2. Öncelik: TSM'ler
+            if 'TSM' in name or 'TOPLUM SAGLIGI' in name:
+                return 'TSM'
+                
+            # 3. Öncelik: İSM (Depo)
+            if 'ISM' in name:
+                return 'ISM'
+            
+            # 4. Öncelik: Son Kullanıcılar (HASTANE ve ÖZEL eklendi)
+            son_kullanici_keywords = ['HASTANE', 'ÖZEL', 'OZEL', 'GÖÇMEN', 'MÜLTECİ', 'VEREM', 'DISPANSER', 'BELEDIYE']
+            if any(keyword in name for keyword in son_kullanici_keywords):
+                return 'SON KULLANICI'
+            
+            return 'Bilinmiyor'
+
+        res_df['Tip'] = res_df.apply(infer_tip, axis=1)
 
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
@@ -379,7 +409,6 @@ if tuketim_file and stok_file:
         with tab6:
             st.subheader("🔄 Akıllı Transfer Önerileri (İlçe İçi)")
             
-            # --- YENİ EKLENEN ÖNCELİK SEÇİMİ ---
             transfer_oncelik = st.radio(
                 "Transfer Hedefi Önceliği Seçiniz:",
                 ["Tümü (Genel)", "Sadece ASM'ler (Aile Sağlığı Merkezleri)", "Sadece Son Kullanıcı Birimleri"],
