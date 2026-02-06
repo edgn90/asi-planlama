@@ -15,15 +15,10 @@ st.title("💉 Akıllı Aşı Talep Tahmini ve Stok Yönetim Paneli")
 # --- YARDIMCI FONKSİYONLAR ---
 def clean_number(x):
     if isinstance(x, str):
-        # Tırnakları, noktaları ve virgülleri temizle
         return x.replace('.', '').replace(',', '').replace('"', '').strip()
     return x
 
 def get_dates_from_csv(file):
-    """
-    CSV dosyasının ilk satırlarından Başlangıç ve Bitiş tarihlerini okur.
-    Regex kullanarak delimiter bağımsız çalışır.
-    """
     try:
         file.seek(0)
         try:
@@ -120,10 +115,6 @@ if tuketim_file and stok_file:
         
         # --- GÜÇLENDİRİLMİŞ CSV OKUMA ---
         def robust_read_csv(file, header_row):
-            """
-            Farklı kodlamalar ve ayırıcılar dener.
-            Sütun sayısı kontrolü yaparak hatalı ayırıcıları eler.
-            """
             methods = [
                 {'encoding': 'utf-8', 'sep': ';'},
                 {'encoding': 'iso-8859-9', 'sep': ';'},
@@ -139,10 +130,7 @@ if tuketim_file and stok_file:
                     file.seek(0)
                     kw = {k: v for k, v in m.items() if k != 'encoding'}
                     df = pd.read_csv(file, header=header_row, encoding=m['encoding'], dtype=str, **kw)
-                    
-                    if len(df.columns) < 2:
-                        continue
-                        
+                    if len(df.columns) < 2: continue
                     return df
                 except Exception:
                     continue
@@ -163,29 +151,19 @@ if tuketim_file and stok_file:
             for col in df.columns:
                 col_upper = col.upper()
                 col_clean = col.replace('"', '').strip()
-                
-                if 'ZAYI' in col_upper:
-                    rename_map[col] = 'ZAYI'
-                elif (col_upper.startswith('IL') or col_upper.startswith('İL')) and col_upper.endswith('E'): 
-                    rename_map[col] = 'ILÇE'
-                elif 'BIRIM' in col_upper and 'ADI' in col_upper:
-                    rename_map[col] = 'BIRIM ADI'
-                elif 'BIRIM' in col_upper and 'TIPI' in col_upper:
-                    rename_map[col] = 'BIRIM TIPI'
-                elif 'TAN' in col_upper and 'IMI' in col_upper:
-                    rename_map[col] = 'ÜRÜN TANIMI'
-                elif 'TOPLAM' in col_upper and 'DOZ' in col_upper and 'UYGULANAN' not in col_upper and 'ZAYI' not in col_upper:
-                    rename_map[col] = 'TOPLAM DOZ'
-            if rename_map:
-                df.rename(columns=rename_map, inplace=True)
+                if 'ZAYI' in col_upper: rename_map[col] = 'ZAYI'
+                elif (col_upper.startswith('IL') or col_upper.startswith('İL')) and col_upper.endswith('E'): rename_map[col] = 'ILÇE'
+                elif 'BIRIM' in col_upper and 'ADI' in col_upper: rename_map[col] = 'BIRIM ADI'
+                elif 'BIRIM' in col_upper and 'TIPI' in col_upper: rename_map[col] = 'BIRIM TIPI'
+                elif 'TAN' in col_upper and 'IMI' in col_upper: rename_map[col] = 'ÜRÜN TANIMI'
+                elif 'TOPLAM' in col_upper and 'DOZ' in col_upper and 'UYGULANAN' not in col_upper and 'ZAYI' not in col_upper: rename_map[col] = 'TOPLAM DOZ'
+            if rename_map: df.rename(columns=rename_map, inplace=True)
             return df
 
         df_raw_s = smart_fix_columns(df_raw_s)
         df_raw_t = smart_fix_columns(df_raw_t)
         
-        # İsim eşitlemesi
-        if 'BIRIM ADI' in df_raw_s.columns:
-             df_raw_s.rename(columns={'BIRIM ADI': 'BIRIM'}, inplace=True)
+        if 'BIRIM ADI' in df_raw_s.columns: df_raw_s.rename(columns={'BIRIM ADI': 'BIRIM'}, inplace=True)
 
         # Veri Doldurma
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
@@ -193,27 +171,17 @@ if tuketim_file and stok_file:
         
         # Sayısal Dönüşümler
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
-        
-        if 'ZAYI' in df_raw_t.columns:
-            df_raw_t['Zayi'] = pd.to_numeric(df_raw_t['ZAYI'].astype(str).apply(clean_number), errors='coerce').fillna(0)
-        else:
-            df_raw_t['Zayi'] = 0
+        df_raw_t['Zayi'] = pd.to_numeric(df_raw_t['ZAYI'].astype(str).apply(clean_number), errors='coerce').fillna(0) if 'ZAYI' in df_raw_t.columns else 0
 
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
 
         # --- KRİTİK AYRIŞTIRMA ---
-        mask_ism_stok = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
-                        (df_raw_s['BIRIM'].str.contains('ISM', case=False, na=False))
-        
-        mask_ism_tuketim = (df_raw_t['ILÇE'].str.contains('FATIH', case=False, na=False)) & \
-                           (df_raw_t['BIRIM'].str.contains('ISM', case=False, na=False))
+        mask_ism_stok = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & (df_raw_s['BIRIM'].str.contains('ISM', case=False, na=False))
+        mask_ism_tuketim = (df_raw_t['ILÇE'].str.contains('FATIH', case=False, na=False)) & (df_raw_t['BIRIM'].str.contains('ISM', case=False, na=False))
 
-        # SAHA VERİLERİ (İSM HARİÇ)
         df_s_saha = df_raw_s[~mask_ism_stok].copy()
         df_t_saha = df_raw_t[~mask_ism_tuketim].copy()
-
-        # ANA DEPO VERİLERİ
         df_s_ism = df_raw_s[mask_ism_stok].copy()
         df_t_ism = df_raw_t[mask_ism_tuketim].copy()
 
@@ -227,32 +195,20 @@ if tuketim_file and stok_file:
         res_df = pd.merge(df_c, df_s_grp, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
         res_df['Tip'] = res_df['Tip'].replace(0, 'Bilinmiyor')
 
-        # Planlama Hesaplamaları
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
         res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
 
-        # --- DURUM VE FAZLA STOK HESAPLAMA ---
         def get_durum_ve_fazla(row):
-            # Durum Belirleme
-            if row['Yetme_Suresi'] < kritik_esik:
-                durum = "🚨 KRİTİK"
+            if row['Yetme_Suresi'] < kritik_esik: durum = "🚨 KRİTİK"
             elif row['Yetme_Suresi'] > asiri_esik:
                 tip_str = str(row['Tip']).upper()
-                if any(x in tip_str for x in ['ASM', 'SON KULLANICI']):
-                    durum = "⚠️ AŞIRI"
-                else:
-                    durum = "✅ Yeterli"
-            else:
-                durum = "✅ Yeterli"
+                durum = "⚠️ AŞIRI" if any(x in tip_str for x in ['ASM', 'SON KULLANICI']) else "✅ Yeterli"
+            else: durum = "✅ Yeterli"
             
-            # Transfer Edilebilir Fazla Stok Hesabı
-            # Formül: Mevcut Stok - (Günlük Tüketim * Aşırı Eşik Süresi)
-            # Eğer tüketim 0 ise (Ölü Stok), tüm stok fazladır.
             hedef_stok = row['Gunluk_Hiz'] * asiri_esik
             fazla_miktar = max(0, row['Stok'] - hedef_stok)
-            
             return pd.Series([durum, int(fazla_miktar)])
 
         res_df[['Durum', 'Fazla_Miktar']] = res_df.apply(get_durum_ve_fazla, axis=1)
@@ -261,17 +217,13 @@ if tuketim_file and stok_file:
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
         sec_asi = st.sidebar.multiselect("💉 Aşı Filtrele", options=sorted(res_df['Urun'].unique()))
         
-        # --- FİLTRE UYGULAMA ---
         df_f = res_df.copy()
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- ANA EKRAN GÖRÜNÜMÜ ---
         st.markdown("---")
-        if s_tarih:
-            st.info(f"📅 **Dönemsel Tüketim Raporu:** {s_tarih} - {b_tarih} ({oto_gun_sayisi} Gün)")
+        if s_tarih: st.info(f"📅 **Dönemsel Tüketim Raporu:** {s_tarih} - {b_tarih} ({oto_gun_sayisi} Gün)")
 
-        # Metrikler
         toplam_sevk = int(df_f[df_f['Gonderilecek'] > 0]['Gonderilecek'].sum())
         kritik_sayisi = len(df_f[df_f['Durum'] == "🚨 KRİTİK"])
         asiri_sayisi = len(df_f[df_f['Durum'] == "⚠️ AŞIRI"])
@@ -285,14 +237,9 @@ if tuketim_file and stok_file:
         
         st.markdown("---")
 
-        # --- 6 SEKMELİ YAPI (YENİ SEKME EKLENDİ) ---
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-            "📦 Sevkiyat Planı", 
-            "⚠️ Fazla ve Ölü Stok", 
-            "📍 İlçe Bazlı Özet", 
-            "📊 İl Geneli",
-            "📉 Zayi ve Verimlilik",
-            "🔄 Akıllı Transfer"
+            "📦 Sevkiyat Planı", "⚠️ Fazla ve Ölü Stok", "📍 İlçe Bazlı Özet", 
+            "📊 İl Geneli", "📉 Zayi ve Verimlilik", "🔄 Akıllı Transfer"
         ])
 
         with tab1:
@@ -314,24 +261,15 @@ if tuketim_file and stok_file:
             with c3: st.download_button("📥 İade Excel", to_excel(f1_asiri), "asiri_stok.xlsx")
             with c4: st.download_button("📥 İade PDF", to_pdf(f1_asiri, "Asiri Stok"), "asiri_stok.pdf")
             
-            # --- ÖLÜ STOK TABLOSU ---
             st.markdown("---")
             st.subheader("🕸️ Ölü Stok (Hiç Tüketimi Olmayan)")
-            st.caption("Aşağıdaki liste, stoğu bulunan ancak seçilen dönemde **hiç tüketim yapmamış (0 Doz)** ASM ve Son Kullanıcı birimlerini içerir.")
-            
-            f1_olu = df_f[
-                (df_f['Stok'] > 0) & 
-                (df_f['Tuketim'] == 0) &
-                (df_f['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['ASM', 'SON KULLANICI'])))
-            ].copy().sort_values('Stok', ascending=False)
-            
+            f1_olu = df_f[(df_f['Stok'] > 0) & (df_f['Tuketim'] == 0) & (df_f['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['ASM', 'SON KULLANICI'])))].copy().sort_values('Stok', ascending=False)
             if not f1_olu.empty:
                 st.dataframe(f1_olu[['Ilce', 'Birim', 'Urun', 'Stok']], use_container_width=True)
                 c_olu1, c_olu2 = st.columns(2)
                 with c_olu1: st.download_button("📥 Ölü Stok Excel", to_excel(f1_olu), "olu_stok.xlsx")
                 with c_olu2: st.download_button("📥 Ölü Stok PDF", to_pdf(f1_olu, "Olu Stok"), "olu_stok.pdf")
-            else:
-                st.success("Tebrikler! Ölü stok (hareketsiz ürün) bulunamadı.")
+            else: st.success("Tebrikler! Ölü stok (hareketsiz ürün) bulunamadı.")
 
         with tab3:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
@@ -339,19 +277,10 @@ if tuketim_file and stok_file:
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
             f2_visible = df_i[df_i['Gonderilecek'] > 0].copy().sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
             
-            # --- TOPLAM SATIRI ---
             if not f2_visible.empty:
-                sum_row = pd.DataFrame({
-                    'Ilce': ['TOPLAM'],
-                    'Urun': ['-'],
-                    'Tuketim': [f2_visible['Tuketim'].sum()],
-                    'Stok': [f2_visible['Stok'].sum()],
-                    'Ihtiyac': [f2_visible['Ihtiyac'].sum()],
-                    'Gonderilecek': [f2_visible['Gonderilecek'].sum()]
-                })
+                sum_row = pd.DataFrame({'Ilce': ['TOPLAM'], 'Urun': ['-'], 'Tuketim': [f2_visible['Tuketim'].sum()], 'Stok': [f2_visible['Stok'].sum()], 'Ihtiyac': [f2_visible['Ihtiyac'].sum()], 'Gonderilecek': [f2_visible['Gonderilecek'].sum()]})
                 f2_display = pd.concat([f2_visible, sum_row], ignore_index=True)
-            else:
-                f2_display = f2_visible
+            else: f2_display = f2_visible
 
             st.subheader("İlçe Bazlı Toplam İhtiyaçlar")
             st.dataframe(f2_display, use_container_width=True)
@@ -361,8 +290,6 @@ if tuketim_file and stok_file:
         
         with tab4:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
-            st.caption("Bu tablo; Saha (ASM/TSM) verileri ile İl Ana Depo (İSM) verilerinin birleşimidir.")
-            
             grp_tuketim_saha = df_t_saha.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
             grp_stok_saha = df_s_saha.groupby('ÜRÜN TANIMI')['Stok'].sum()
             grp_stok_ism = df_s_ism.groupby('ÜRÜN TANIMI')['Stok'].sum()
@@ -370,68 +297,32 @@ if tuketim_file and stok_file:
             grp_tuketim_total = grp_tuketim_saha.add(grp_tuketim_ism, fill_value=0)
             
             all_vaccines = grp_stok_saha.index.union(grp_stok_ism.index).union(grp_tuketim_total.index)
-            
             df_genel = pd.DataFrame(index=all_vaccines)
             df_genel.index.name = 'Urun'
-            
             df_genel['İl Ana Depo (ISM)'] = grp_stok_ism
             df_genel['Saha (TSM, ASM, Son)'] = grp_stok_saha
             df_genel['Toplam Tüketim'] = grp_tuketim_total
-            
             df_genel = df_genel.fillna(0)
             df_genel['İl Geneli Stok'] = df_genel['İl Ana Depo (ISM)'] + df_genel['Saha (TSM, ASM, Son)']
-            
             df_genel['Günlük ortalama tüketim'] = (df_genel['Toplam Tüketim'] / oto_gun_sayisi).round(2)
-            df_genel['Yetme Süresi (Gün)'] = df_genel.apply(
-                lambda r: round(r['İl Geneli Stok'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
-            )
-            
-            df_genel['İl Ana Depo Yetme Süresi (Gün)'] = df_genel.apply(
-                lambda r: round(r['İl Ana Depo (ISM)'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1
-            )
+            df_genel['Yetme Süresi (Gün)'] = df_genel.apply(lambda r: round(r['İl Geneli Stok'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1)
+            df_genel['İl Ana Depo Yetme Süresi (Gün)'] = df_genel.apply(lambda r: round(r['İl Ana Depo (ISM)'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1)
 
             df_genel = df_genel.reset_index()
-            cols_order = ['Urun', 'İl Geneli Stok', 'İl Ana Depo (ISM)', 'İl Ana Depo Yetme Süresi (Gün)', 
-                          'Saha (TSM, ASM, Son)', 'Toplam Tüketim', 'Günlük ortalama tüketim', 'Yetme Süresi (Gün)']
-            
-            if 'Urun' not in df_genel.columns:
-                 df_genel.rename(columns={df_genel.columns[0]: 'Urun'}, inplace=True)
-            
+            cols_order = ['Urun', 'İl Geneli Stok', 'İl Ana Depo (ISM)', 'İl Ana Depo Yetme Süresi (Gün)', 'Saha (TSM, ASM, Son)', 'Toplam Tüketim', 'Günlük ortalama tüketim', 'Yetme Süresi (Gün)']
+            if 'Urun' not in df_genel.columns: df_genel.rename(columns={df_genel.columns[0]: 'Urun'}, inplace=True)
             df_genel = df_genel[cols_order]
 
-            # --- GRAFİK ---
             st.markdown("### ⏳ Aşı Bazlı Yetme Süresi Analizi")
-            st.caption("Renkler stok yeterlilik durumunu gösterir. (Yeşil: Güvenli, Kırmızı: Kritik). Çubuklar maksimum 180 gün ile sınırlandırılmıştır; gerçek değer için fareyle üzerine geliniz.")
-            
             chart_df = df_genel.copy()
             chart_df['Visual_Value'] = chart_df['Yetme Süresi (Gün)'].apply(lambda x: 180 if x > 180 else x)
             chart_df['Label'] = chart_df['Yetme Süresi (Gün)'].apply(lambda x: "180+" if x > 180 else f"{x:.1f}")
-
-            def get_chart_color(val):
-                if val < 15: return '#ff4b4b'
-                elif val < 30: return '#ffa500'
-                elif val < 60: return '#ffe066'
-                else: return '#90ee90'
+            chart_df['Color'] = chart_df['Yetme Süresi (Gün)'].apply(lambda val: '#ff4b4b' if val < 15 else '#ffa500' if val < 30 else '#ffe066' if val < 60 else '#90ee90')
             
-            chart_df['Color'] = chart_df['Yetme Süresi (Gün)'].apply(get_chart_color)
-            
-            base = alt.Chart(chart_df).encode(
-                x=alt.X('Urun', sort='-y', title='Aşılar'),
-                tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim']
-            )
-
-            bars = base.mark_bar().encode(
-                y=alt.Y('Visual_Value', title='Yetme Süresi (Gün) [Maks 180]'),
-                color=alt.Color('Color', scale=None, legend=None)
-            )
-
-            text = base.mark_text(align='center', baseline='bottom', dy=-5).encode(
-                y='Visual_Value',
-                text='Label'
-            )
-
-            chart = (bars + text).properties(height=400).interactive()
-            st.altair_chart(chart, use_container_width=True)
+            base = alt.Chart(chart_df).encode(x=alt.X('Urun', sort='-y', title='Aşılar'), tooltip=['Urun', 'Yetme Süresi (Gün)', 'İl Geneli Stok', 'Günlük ortalama tüketim'])
+            bars = base.mark_bar().encode(y=alt.Y('Visual_Value', title='Yetme Süresi (Gün) [Maks 180]'), color=alt.Color('Color', scale=None, legend=None))
+            text = base.mark_text(align='center', baseline='bottom', dy=-5).encode(y='Visual_Value', text='Label')
+            st.altair_chart((bars + text).properties(height=400).interactive(), use_container_width=True)
 
             def highlight_yetme_suresi(val):
                 if not isinstance(val, (int, float)): return ''
@@ -441,48 +332,28 @@ if tuketim_file and stok_file:
                 else: return 'background-color: #90ee90; color: black'
 
             styled_df = df_genel.style.map(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)', 'İl Ana Depo Yetme Süresi (Gün)'])
-            styled_df = styled_df.format({
-                "Günlük ortalama tüketim": "{:.2f}", 
-                "Yetme Süresi (Gün)": "{:.1f}",
-                "İl Ana Depo Yetme Süresi (Gün)": "{:.1f}",
-                "İl Geneli Stok": "{:.0f}",
-                "İl Ana Depo (ISM)": "{:.0f}",
-                "Saha (TSM, ASM, Son)": "{:.0f}",
-                "Toplam Tüketim": "{:.0f}"
-            })
-            
+            styled_df = styled_df.format({"Günlük ortalama tüketim": "{:.2f}", "Yetme Süresi (Gün)": "{:.1f}", "İl Ana Depo Yetme Süresi (Gün)": "{:.1f}", "İl Geneli Stok": "{:.0f}", "İl Ana Depo (ISM)": "{:.0f}", "Saha (TSM, ASM, Son)": "{:.0f}", "Toplam Tüketim": "{:.0f}"})
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
-            
             c7, c8 = st.columns(2)
             with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
             with c8: st.download_button("📥 İl Geneli PDF", to_pdf(df_genel, "Il Geneli Stok ve Tuketim"), "il_geneli_ozet.pdf")
 
         with tab5:
             st.subheader("📉 Zayi ve Verimlilik Analizi")
-            
-            analiz_turu = st.radio(
-                "Analiz Türü Seçin:",
-                ("Tüm Aşılar (Genel Görünüm)", "Sadece Tekli Doz Aşılar (Kritik Analiz)"),
-                horizontal=True
-            )
-            
+            analiz_turu = st.radio("Analiz Türü Seçin:", ("Tüm Aşılar (Genel Görünüm)", "Sadece Tekli Doz Aşılar (Kritik Analiz)"), horizontal=True)
             st.info("💡 Not: 'Sadece Tekli Doz' seçeneği; BCG, Oral Polio ve PPD gibi çoklu dozlu aşıları hariç tutarak, operasyonel zayiyi (kırılma, soğuk zincir vb.) gösterir.")
-
-            df_zayi = df_f.copy()
             
-            if analiz_turu == "Sadece Tekli Doz Aşılar (Kritik Analiz)":
-                df_zayi = df_zayi[~df_zayi['Urun'].str.upper().str.contains('BCG|POLIO|PPD', regex=True)]
+            df_zayi = df_f.copy()
+            if analiz_turu == "Sadece Tekli Doz Aşılar (Kritik Analiz)": df_zayi = df_zayi[~df_zayi['Urun'].str.upper().str.contains('BCG|POLIO|PPD', regex=True)]
 
             zayi_ozet = df_zayi.groupby('Ilce').agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
             zayi_ozet['Zayi Oranı (%)'] = zayi_ozet.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
             zayi_ozet = zayi_ozet.sort_values('Zayi', ascending=False)
             
             col_z1, col_z2 = st.columns(2)
-            
             with col_z1:
                 st.markdown("#### 🏙️ İlçelere Göre Zayi Durumu")
                 st.dataframe(zayi_ozet, use_container_width=True, hide_index=True)
-            
             with col_z2:
                 st.markdown("#### 💉 Aşılara Göre Toplam Zayi")
                 asi_zayi = df_zayi.groupby('Urun')['Zayi'].sum().reset_index().sort_values('Zayi', ascending=False)
@@ -490,10 +361,8 @@ if tuketim_file and stok_file:
             
             st.markdown("---")
             st.markdown(f"#### 🏢 En Çok Zayi Veren 20 Kurum ({analiz_turu})")
-            
             kurum_zayi = df_zayi.groupby(['Ilce', 'Birim', 'Urun']).agg({'Zayi': 'sum'}).reset_index()
             kurum_zayi = kurum_zayi[kurum_zayi['Zayi'] > 0].sort_values('Zayi', ascending=False).head(20)
-            
             st.dataframe(kurum_zayi, use_container_width=True, hide_index=True)
             
             c9, c10 = st.columns(2)
@@ -502,41 +371,51 @@ if tuketim_file and stok_file:
             
             st.markdown("---")
             st.markdown("### 📥 Detaylı Zayi Raporu (İlçe + Aşı Bazlı)")
-            st.caption("Aşağıdaki butonu kullanarak, her bir ilçedeki her bir aşı çeşidi için ayrı ayrı tüketim ve zayi miktarlarını içeren detaylı listeyi indirebilirsiniz.")
-            
             zayi_detay = df_zayi.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
             zayi_detay['Zayi Oranı (%)'] = zayi_detay.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
             zayi_detay = zayi_detay.sort_values(['Ilce', 'Zayi'], ascending=[True, False])
-            
             st.download_button("📥 Detaylı Zayi Raporu İndir (İlçe + Aşı)", to_excel(zayi_detay), "detayli_zayi_analizi.xlsx")
 
-        # --- YENİ EKLENEN SEKME: AKILLI TRANSFER ---
         with tab6:
             st.subheader("🔄 Akıllı Transfer Önerileri (İlçe İçi)")
+            
+            # --- YENİ EKLENEN ÖNCELİK SEÇİMİ ---
+            transfer_oncelik = st.radio(
+                "Transfer Hedefi Önceliği Seçiniz:",
+                ["Tümü (Genel)", "Sadece ASM'ler (Aile Sağlığı Merkezleri)", "Sadece Son Kullanıcı Birimleri"],
+                horizontal=True
+            )
+            
             st.markdown("""
             Bu modül, aynı ilçe içinde **fazla stoğu olan** birimlerle **aşı ihtiyacı olan** birimleri eşleştirir.
-            
-            * **Verici (Kimden):** Stoğu, belirlediğiniz "Aşırı Stok Eşiği"nin üzerinde olan veya hiç tüketimi olmayan birimler.
-            * **Alıcı (Kime):** Stoğu kritik seviyede olan ve sevkiyat planında görünen birimler.
+            * **En az 10 doz** transfer edilecekse öneri oluşturulur.
+            * İl Depoları (İSM), TSM ve diğer depolar bu hesaplamaya **dahil edilmez**.
             """)
             
             transfer_onerileri = []
             
-            # Sadece ilçe bazlı eşleştirme yapıyoruz (Lojistik kolaylığı için)
             for ilce in df_f['Ilce'].unique():
                 df_ilce = df_f[df_f['Ilce'] == ilce]
                 
-                for urun in df_ilce['Urun'].unique():
-                    # Alıcılar: İhtiyacı olanlar (Gonderilecek > 0)
-                    alicilar = df_ilce[(df_ilce['Urun'] == urun) & (df_ilce['Gonderilecek'] > 0)].copy()
+                # Depoları tamamen çıkar (hem alıcı hem verici olamazlar)
+                df_ilce_transfer = df_ilce[~df_ilce['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['ISM', 'TSM', 'DEPO']))].copy()
+                
+                for urun in df_ilce_transfer['Urun'].unique():
+                    # Potansiyel Alıcılar (İhtiyacı olanlar)
+                    alicilar = df_ilce_transfer[(df_ilce_transfer['Urun'] == urun) & (df_ilce_transfer['Gonderilecek'] > 0)].copy()
                     
-                    # Vericiler: Fazla stoğu olanlar (Fazla_Miktar > 0)
-                    vericiler = df_ilce[(df_ilce['Urun'] == urun) & (df_ilce['Fazla_Miktar'] > 0)].copy()
+                    # --- ÖNCELİK FİLTRESİ UYGULAMA ---
+                    if transfer_oncelik == "Sadece ASM'ler (Aile Sağlığı Merkezleri)":
+                        alicilar = alicilar[alicilar['Tip'].astype(str).str.upper().str.contains("ASM")]
+                    elif transfer_oncelik == "Sadece Son Kullanıcı Birimleri":
+                        alicilar = alicilar[alicilar['Tip'].astype(str).str.upper().str.contains("SON KULLANICI")]
+                    
+                    # Potansiyel Vericiler (Fazlası olanlar)
+                    vericiler = df_ilce_transfer[(df_ilce_transfer['Urun'] == urun) & (df_ilce_transfer['Fazla_Miktar'] > 0)].copy()
                     
                     if alicilar.empty or vericiler.empty:
                         continue
                         
-                    # Basit Eşleştirme Algoritması (Greedy)
                     vericiler = vericiler.sort_values('Fazla_Miktar', ascending=False)
                     alicilar = alicilar.sort_values('Gonderilecek', ascending=False)
                     
@@ -546,34 +425,34 @@ if tuketim_file and stok_file:
                         for idx_alici, alici in alicilar.iterrows():
                             if alici['Gonderilecek'] <= 0: continue
                             
-                            # Transfer edilecek miktar: Min(Vericinin Fazlası, Alicinin İhtiyacı)
                             transfer_miktar = min(verici['Fazla_Miktar'], alici['Gonderilecek'])
                             
-                            if transfer_miktar > 0:
+                            if transfer_miktar >= 10:
                                 transfer_onerileri.append({
                                     'İlçe': ilce,
                                     'Ürün': urun,
                                     'Kimden (Verici)': verici['Birim'],
+                                    'Tip (Verici)': verici['Tip'],
                                     'Kime (Alıcı)': alici['Birim'],
+                                    'Tip (Alıcı)': alici['Tip'],
                                     'Transfer Miktarı': int(transfer_miktar),
                                     'Verici Kalan Fazla': int(verici['Fazla_Miktar'] - transfer_miktar),
                                     'Alıcı Kalan İhtiyaç': int(alici['Gonderilecek'] - transfer_miktar)
                                 })
                                 
-                                # Güncelleme (Sanal)
                                 verici['Fazla_Miktar'] -= transfer_miktar
                                 alicilar.at[idx_alici, 'Gonderilecek'] -= transfer_miktar
 
             if transfer_onerileri:
                 df_transfer = pd.DataFrame(transfer_onerileri)
-                st.success(f"Toplam {len(df_transfer)} adet transfer önerisi bulundu.")
+                st.success(f"Toplam {len(df_transfer)} adet (10 Doz+) transfer önerisi bulundu. ({transfer_oncelik})")
                 st.dataframe(df_transfer, use_container_width=True)
                 
                 c_tr1, c_tr2 = st.columns(2)
                 with c_tr1: st.download_button("📥 Transfer Önerileri Excel", to_excel(df_transfer), "akilli_transfer.xlsx")
                 with c_tr2: st.download_button("📥 Transfer Önerileri PDF", to_pdf(df_transfer, "Akilli Transfer Onerileri"), "akilli_transfer.pdf")
             else:
-                st.info("Şu anki kriterlere göre (İlçe içi) herhangi bir transfer fırsatı bulunamadı.")
+                st.info(f"Seçilen kriterlere göre ({transfer_oncelik}, En az 10 doz) transfer fırsatı bulunamadı.")
 
     except Exception as e:
         st.error(f"Hata: {e}")
