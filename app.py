@@ -10,7 +10,7 @@ import re
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
 
-# --- SESSION STATE BAŞLATMA (Özet Modu İçin) ---
+# --- SESSION STATE ---
 if 'show_summary' not in st.session_state:
     st.session_state.show_summary = False
 
@@ -93,25 +93,33 @@ def to_pdf(df, title):
     
     return bytes(pdf.output())
 
-# --- YAN MENÜ: KOMPAKT AYARLAR ---
-st.sidebar.markdown("### ⚙️ Ayarlar")
+# --- YAN MENÜ: SADELEŞTİRİLMİŞ ---
+st.sidebar.header("⚙️ Planlama Ayarları")
 
-# GÜNCELLENEN KISIM: Plan Süresi 1-60 arası, varsayılan 10
-plan_suresi = st.sidebar.slider("Plan Süresi (Gün)", 1, 60, 10)
-guvenlik_marji = st.sidebar.slider("Güvenlik Payı (%)", 0, 100, 20) / 100
+# 1. EN ÖNEMLİ AYAR (AÇIKTA)
+st.sidebar.markdown("**1. Planlama Periyodu**")
+plan_suresi = st.sidebar.slider("Kaç günlük aşı gönderilecek?", 1, 60, 10, help="Sahadaki kurumların stoğunun kaç gün daha yetmesini istiyorsunuz?")
 
-c1, c2 = st.sidebar.columns(2)
-with c1:
-    kritik_esik = st.number_input("Kritik (Gün)", value=3)
-with c2:
-    asiri_esik = st.number_input("Aşırı (Gün)", value=60)
+# 2. TEKNİK AYARLAR (GİZLİ - EXPANDER İÇİNDE)
+st.sidebar.markdown("---")
+with st.sidebar.expander("🛠️ İnce Ayarlar / Parametreler"):
+    st.info("Bu ayarlar lojistik politikalarıyla ilgilidir ve nadiren değiştirilir.")
+    
+    guvenlik_marji = st.slider("Güvenlik Stoğu (%)", 0, 100, 20, help="Beklenmedik talep artışları için eklenecek tampon miktar.") / 100
+    
+    c1, c2 = st.columns(2)
+    with c1:
+        kritik_esik = st.number_input("Kritik Eşik (Gün)", value=3, help="Stok bu gün sayısının altına düşerse Kırmızı uyarı verilir.")
+    with c2:
+        asiri_esik = st.number_input("Aşırı Eşik (Gün)", value=60, help="Stok bu gün sayısının üzerine çıkarsa Sarı (Fazla) uyarı verilir.")
 
 # --- DOSYA YÜKLEME ALANI ---
+st.markdown("### 📂 Dosya Yükleme")
 col_u1, col_u2 = st.columns(2)
 with col_u1:
-    tuketim_file = st.file_uploader("📂 Dönemsel Tüketim Raporu (CSV)", type=["csv"])
+    tuketim_file = st.file_uploader("Dönemsel Tüketim Raporu (CSV)", type=["csv"], help="e-Nabız veya Aşıla sisteminden alınan tüketim dökümü.")
 with col_u2:
-    stok_file = st.file_uploader("📂 Stok Durum Raporu Birim Bazında (CSV)", type=["csv"])
+    stok_file = st.file_uploader("Stok Durum Raporu (CSV)", type=["csv"], help="Birim bazında güncel stok sayıları.")
 
 # --- ANA PROGRAM ---
 if tuketim_file and stok_file:
@@ -243,6 +251,8 @@ if tuketim_file and stok_file:
         res_df[['Durum', 'Fazla_Miktar']] = res_df.apply(get_durum_ve_fazla, axis=1)
 
         # --- FİLTRELER ---
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("**🔍 Veri Filtreleme**")
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
         sec_asi = st.sidebar.multiselect("💉 Aşı Filtrele", options=sorted(res_df['Urun'].unique()))
         
@@ -463,87 +473,4 @@ if tuketim_file and stok_file:
                 st.markdown("### 📥 Detaylı Zayi Raporu (İlçe + Aşı Bazlı)")
                 zayi_detay = df_zayi.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
                 zayi_detay['Zayi Oranı (%)'] = zayi_detay.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
-                zayi_detay = zayi_detay.sort_values(['Ilce', 'Zayi'], ascending=[True, False])
-                st.download_button("📥 Detaylı Zayi Raporu İndir (İlçe + Aşı)", to_excel(zayi_detay), "detayli_zayi_analizi.xlsx")
-
-            with tab6:
-                st.subheader("🔄 Akıllı Transfer Önerileri (İlçe İçi)")
-                
-                transfer_oncelik = st.radio(
-                    "Transfer Hedefi Önceliği Seçiniz:",
-                    ["Tümü (Genel)", "Sadece ASM'ler (Aile Sağlığı Merkezleri)", "Sadece Son Kullanıcı Birimleri"],
-                    horizontal=True
-                )
-                
-                st.markdown("""
-                Bu modül, aynı ilçe içinde **fazla stoğu olan** birimlerle **aşı ihtiyacı olan** birimleri eşleştirir.
-                * **En az 10 doz** transfer edilecekse öneri oluşturulur.
-                * İl Depoları (İSM), TSM ve diğer depolar bu hesaplamaya **dahil edilmez**.
-                """)
-                
-                transfer_onerileri = []
-                
-                for ilce in df_f['Ilce'].unique():
-                    df_ilce = df_f[df_f['Ilce'] == ilce]
-                    
-                    # Depoları tamamen çıkar (hem alıcı hem verici olamazlar)
-                    df_ilce_transfer = df_ilce[~df_ilce['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['ISM', 'TSM', 'DEPO']))].copy()
-                    
-                    for urun in df_ilce_transfer['Urun'].unique():
-                        # Potansiyel Alıcılar (İhtiyacı olanlar)
-                        alicilar = df_ilce_transfer[(df_ilce_transfer['Urun'] == urun) & (df_ilce_transfer['Gonderilecek'] > 0)].copy()
-                        
-                        # --- ÖNCELİK FİLTRESİ UYGULAMA ---
-                        if transfer_oncelik == "Sadece ASM'ler (Aile Sağlığı Merkezleri)":
-                            alicilar = alicilar[alicilar['Tip'].astype(str).str.upper().str.contains("ASM")]
-                        elif transfer_oncelik == "Sadece Son Kullanıcı Birimleri":
-                            alicilar = alicilar[alicilar['Tip'].astype(str).str.upper().str.contains("SON KULLANICI")]
-                        
-                        # Potansiyel Vericiler (Fazlası olanlar)
-                        vericiler = df_ilce_transfer[(df_ilce_transfer['Urun'] == urun) & (df_ilce_transfer['Fazla_Miktar'] > 0)].copy()
-                        
-                        if alicilar.empty or vericiler.empty:
-                            continue
-                            
-                        vericiler = vericiler.sort_values('Fazla_Miktar', ascending=False)
-                        alicilar = alicilar.sort_values('Gonderilecek', ascending=False)
-                        
-                        for _, verici in vericiler.iterrows():
-                            if verici['Fazla_Miktar'] <= 0: continue
-                            
-                            for idx_alici, alici in alicilar.iterrows():
-                                if alici['Gonderilecek'] <= 0: continue
-                                
-                                transfer_miktar = min(verici['Fazla_Miktar'], alici['Gonderilecek'])
-                                
-                                if transfer_miktar >= 10:
-                                    transfer_onerileri.append({
-                                        'İlçe': ilce,
-                                        'Ürün': urun,
-                                        'Kimden (Verici)': verici['Birim'],
-                                        'Tip (Verici)': verici['Tip'],
-                                        'Kime (Alıcı)': alici['Birim'],
-                                        'Tip (Alıcı)': alici['Tip'],
-                                        'Transfer Miktarı': int(transfer_miktar),
-                                        'Verici Kalan Fazla': int(verici['Fazla_Miktar'] - transfer_miktar),
-                                        'Alıcı Kalan İhtiyaç': int(alici['Gonderilecek'] - transfer_miktar)
-                                    })
-                                    
-                                    verici['Fazla_Miktar'] -= transfer_miktar
-                                    alicilar.at[idx_alici, 'Gonderilecek'] -= transfer_miktar
-
-                if transfer_onerileri:
-                    df_transfer = pd.DataFrame(transfer_onerileri)
-                    st.success(f"Toplam {len(df_transfer)} adet (10 Doz+) transfer önerisi bulundu. ({transfer_oncelik})")
-                    st.dataframe(df_transfer, use_container_width=True)
-                    
-                    c_tr1, c_tr2 = st.columns(2)
-                    with c_tr1: st.download_button("📥 Transfer Önerileri Excel", to_excel(df_transfer), "akilli_transfer.xlsx")
-                    with c_tr2: st.download_button("📥 Transfer Önerileri PDF", to_pdf(df_transfer, "Akilli Transfer Onerileri"), "akilli_transfer.pdf")
-                else:
-                    st.info(f"Seçilen kriterlere göre ({transfer_oncelik}, En az 10 doz) transfer fırsatı bulunamadı.")
-
-    except Exception as e:
-        st.error(f"Hata: {e}")
-else:
-    st.info("Lütfen dosyaları yükleyin.")
+                zayi_detay = zayi_detay.sort_values(['Ilce', 'Zayi
