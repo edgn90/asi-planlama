@@ -96,7 +96,8 @@ def to_pdf(df, title):
 # --- YAN MENÜ: KOMPAKT AYARLAR ---
 st.sidebar.markdown("### ⚙️ Ayarlar")
 
-plan_suresi = st.sidebar.slider("Plan Süresi (Gün)", 7, 90, 15)
+# GÜNCELLENEN KISIM: Plan Süresi 1-60 arası, varsayılan 10
+plan_suresi = st.sidebar.slider("Plan Süresi (Gün)", 1, 60, 10)
 guvenlik_marji = st.sidebar.slider("Güvenlik Payı (%)", 0, 100, 20) / 100
 
 c1, c2 = st.sidebar.columns(2)
@@ -198,7 +199,7 @@ if tuketim_file and stok_file:
         
         res_df = pd.merge(df_c, df_s_grp, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
         
-        # --- EKSİK TİPLERİ ONARMA (AKILLI TAHMİN V2) ---
+        # --- EKSİK TİPLERİ ONARMA ---
         def infer_tip(row):
             current_tip = str(row['Tip']).upper()
             if row['Tip'] != 0 and row['Tip'] != 'Bilinmiyor' and current_tip != 'NAN':
@@ -215,7 +216,6 @@ if tuketim_file and stok_file:
             if 'ISM' in name:
                 return 'ISM'
             
-            # HASTANE ve ÖZEL kelimeleri eklendi
             son_kullanici_keywords = ['HASTANE', 'ÖZEL', 'OZEL', 'GÖÇMEN', 'MÜLTECİ', 'VEREM', 'DISPANSER', 'BELEDIYE']
             if any(keyword in name for keyword in son_kullanici_keywords):
                 return 'SON KULLANICI'
@@ -250,7 +250,7 @@ if tuketim_file and stok_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
         
-        # --- İL GENELİ VERİSİ HAZIRLIĞI (Her iki modda da lazım) ---
+        # --- İL GENELİ VERİSİ HAZIRLIĞI ---
         grp_tuketim_saha = df_t_saha.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
         grp_stok_saha = df_s_saha.groupby('ÜRÜN TANIMI')['Stok'].sum()
         grp_stok_ism = df_s_ism.groupby('ÜRÜN TANIMI')['Stok'].sum()
@@ -300,20 +300,17 @@ if tuketim_file and stok_file:
             
             analysis_text = []
             
-            # Kritik Stok Uyarısı
             if critical_products > 0:
                 crit_list = df_genel[df_genel['Yetme Süresi (Gün)'] < 15].index.tolist()
                 analysis_text.append(f"🔴 **ACİL:** Şu aşılar il genelinde kritik seviyenin altında (15 günden az): **{', '.join(crit_list)}**. Acil tedarik planlanmalı.")
             else:
                 analysis_text.append("🟢 **STOK:** İl genelinde hiçbir aşı kritik seviyede değil, durum stabil.")
             
-            # Sevkiyat Yoğunluğu
             if total_shipment_needed > 10000:
                 analysis_text.append(f"🚚 **LOJİSTİK:** Sahada çok yüksek talep var (**{total_shipment_needed:,} doz**). Sevkiyat araçlarının kapasitesi kontrol edilmeli.")
             elif total_shipment_needed > 0:
                 analysis_text.append(f"🚚 **LOJİSTİK:** Sahaya rutin sevkiyat planlanmalı (**{total_shipment_needed:,} doz**).")
             
-            # Zayi Durumu
             zayi_orani = (df_f['Zayi'].sum() / (df_f['Tuketim'].sum() + 1)) * 100
             if zayi_orani > 5:
                 analysis_text.append(f"⚠️ **VERİMLİLİK:** İl geneli zayi oranı **%{zayi_orani:.2f}** ile dikkat çekici seviyede. Soğuk zincir ve uygulama hataları incelenmeli.")
