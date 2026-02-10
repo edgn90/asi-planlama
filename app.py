@@ -10,7 +10,7 @@ import re
 # --- SAYFA AYARLARI ---
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
 
-# --- SESSION STATE ---
+# --- SESSION STATE BAŞLATMA (Özet Modu İçin) ---
 if 'show_summary' not in st.session_state:
     st.session_state.show_summary = False
 
@@ -93,33 +93,33 @@ def to_pdf(df, title):
     
     return bytes(pdf.output())
 
-# --- YAN MENÜ: SADELEŞTİRİLMİŞ ---
+# --- YAN MENÜ: SADELEŞTİRİLMİŞ AYARLAR ---
 st.sidebar.header("⚙️ Planlama Ayarları")
 
-# 1. EN ÖNEMLİ AYAR (AÇIKTA)
+# 1. ANA AYAR (Görünür)
 st.sidebar.markdown("**1. Planlama Periyodu**")
-plan_suresi = st.sidebar.slider("Kaç günlük aşı gönderilecek?", 1, 60, 10, help="Sahadaki kurumların stoğunun kaç gün daha yetmesini istiyorsunuz?")
+plan_suresi = st.sidebar.slider("Plan Süresi (Gün)", 1, 60, 10, help="Stokların kaç gün yetecek şekilde planlanacağını seçin.")
 
-# 2. TEKNİK AYARLAR (GİZLİ - EXPANDER İÇİNDE)
+# 2. GELİŞMİŞ AYARLAR (Gizli / Expander)
 st.sidebar.markdown("---")
-with st.sidebar.expander("🛠️ İnce Ayarlar / Parametreler"):
-    st.info("Bu ayarlar lojistik politikalarıyla ilgilidir ve nadiren değiştirilir.")
+with st.sidebar.expander("🛠️ Gelişmiş / İnce Ayarlar"):
+    st.info("Bu parametreler kurumsal politikalarla ilgilidir.")
     
-    guvenlik_marji = st.slider("Güvenlik Stoğu (%)", 0, 100, 20, help="Beklenmedik talep artışları için eklenecek tampon miktar.") / 100
+    guvenlik_marji = st.slider("Güvenlik Payı (%)", 0, 100, 20) / 100
     
     c1, c2 = st.columns(2)
     with c1:
-        kritik_esik = st.number_input("Kritik Eşik (Gün)", value=3, help="Stok bu gün sayısının altına düşerse Kırmızı uyarı verilir.")
+        kritik_esik = st.number_input("Kritik (Gün)", value=3)
     with c2:
-        asiri_esik = st.number_input("Aşırı Eşik (Gün)", value=60, help="Stok bu gün sayısının üzerine çıkarsa Sarı (Fazla) uyarı verilir.")
+        asiri_esik = st.number_input("Aşırı (Gün)", value=60)
 
 # --- DOSYA YÜKLEME ALANI ---
 st.markdown("### 📂 Dosya Yükleme")
 col_u1, col_u2 = st.columns(2)
 with col_u1:
-    tuketim_file = st.file_uploader("Dönemsel Tüketim Raporu (CSV)", type=["csv"], help="e-Nabız veya Aşıla sisteminden alınan tüketim dökümü.")
+    tuketim_file = st.file_uploader("📂 Dönemsel Tüketim Raporu (CSV)", type=["csv"])
 with col_u2:
-    stok_file = st.file_uploader("Stok Durum Raporu (CSV)", type=["csv"], help="Birim bazında güncel stok sayıları.")
+    stok_file = st.file_uploader("📂 Stok Durum Raporu Birim Bazında (CSV)", type=["csv"])
 
 # --- ANA PROGRAM ---
 if tuketim_file and stok_file:
