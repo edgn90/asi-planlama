@@ -89,6 +89,22 @@ def to_pdf(df, title):
     
     return bytes(pdf.output())
 
+# --- ÖZELLEŞTİRİLMİŞ YUVARLAMA FONKSİYONU ---
+def ozellestirilmis_yuvarlama(val):
+    if val <= 0:
+        return 0
+    
+    # Standart matematiksel yuvarlama (x.5 -> x+1)
+    def math_round(n):
+        return int(n + 0.5)
+    
+    if val < 100:
+        return math_round(val / 10) * 10
+    elif val < 500:
+        return math_round(val / 50) * 50
+    else:
+        return math_round(val / 100) * 100
+
 # --- YAN MENÜ ---
 st.sidebar.header("⚙️ Planlama Ayarları")
 
@@ -217,7 +233,10 @@ if tuketim_file and stok_file:
 
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
-        res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(lambda x: np.ceil(x) if x > 0 else 0)
+        
+        # --- GONDERİLECEK HESAPLAMA (ÖZELLEŞTİRİLMİŞ YUVARLAMA İLE) ---
+        res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(ozellestirilmis_yuvarlama)
+        
         res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
 
         def get_durum_ve_fazla(row):
@@ -275,7 +294,7 @@ if tuketim_file and stok_file:
         
         st.markdown("---")
 
-        # --- YENİDEN DÜZENLENMİŞ SEKMELER ---
+        # --- SEKMELER ---
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📊 İl Geneli",
             "📍 İlçe Bazlı Özet",
@@ -325,24 +344,8 @@ if tuketim_file and stok_file:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             
-            # --- YENİ EKLENEN ÖZEL YUVARLAMA MANTIĞI ---
-            def ozellestirilmis_yuvarlama(val):
-                if val <= 0:
-                    return 0
-                
-                # Standart matematiksel yuvarlama (x.5 -> x+1)
-                def math_round(n):
-                    return int(n + 0.5)
-                
-                if val < 100:
-                    return math_round(val / 10) * 10
-                elif val < 500:
-                    return math_round(val / 50) * 50
-                else:
-                    return math_round(val / 100) * 100
-            
+            # İlçe bazlı da aynı yuvarlama kuralı uygulanıyor
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(ozellestirilmis_yuvarlama)
-            # ---------------------------------------------
 
             f2_visible = df_i[df_i['Gonderilecek'] > 0].copy().sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
             
