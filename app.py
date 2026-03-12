@@ -232,9 +232,27 @@ if tuketim_file and stok_file:
         res_df['Tip'] = res_df.apply(infer_tip, axis=1)
 
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
-        res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         
-        # --- GONDERİLECEK HESAPLAMA (ÖZELLEŞTİRİLMİŞ YUVARLAMA İLE) ---
+        # --- ANOMALİ (HATALI VERİ) DEDEKTÖRÜ MANTIĞI ---
+        def anomali_tespit(row):
+            hiz = row['Gunluk_Hiz']
+            tip = str(row['Tip']).upper()
+            
+            # Günlük tüketim hızına göre anomali sınırları
+            if 'ASM' in tip and hiz > 30:
+                return True
+            elif 'TSM' in tip and hiz > 150:
+                return True
+            elif 'SON KULLANICI' in tip and hiz > 150:
+                return True
+            elif hiz > 500: # Genel çok yüksek tüketim (Hatalı sıfır eklentisi vb.)
+                return True
+            return False
+
+        res_df['Veri_Anomalisi'] = res_df.apply(anomali_tespit, axis=1)
+
+        # --- İHTİYAÇ VE YUVARLAMA ---
+        res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(ozellestirilmis_yuvarlama)
         
         res_df['Yetme_Suresi'] = res_df.apply(lambda r: round(r['Stok'] / r['Gunluk_Hiz'], 1) if r['Gunluk_Hiz'] > 0 else 999, axis=1)
@@ -344,7 +362,6 @@ if tuketim_file and stok_file:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
             
-            # İlçe bazlı da aynı yuvarlama kuralı uygulanıyor
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(ozellestirilmis_yuvarlama)
 
             f2_visible = df_i[df_i['Gonderilecek'] > 0].copy().sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
@@ -362,6 +379,21 @@ if tuketim_file and stok_file:
 
         # TAB 3: SEVKİYAT PLANI
         with tab3:
+            
+            # --- YENİ: ANOMALİ (HATALI VERİ) GÖSTERGE TABLOSU ---
+            df_anomali = df_f[(df_f['Veri_Anomalisi'] == True) & (df_f['Gonderilecek'] > 0)].copy()
+            
+            if not df_anomali.empty:
+                st.error("🚨 **DİKKAT: Olası Hatalı Veri Girişi Tespit Edildi!**")
+                st.markdown("""
+                Aşağıdaki birimlerin **günlük aşı tüketim hızları**, bulundukları kurum tipinin (ASM vb.) rutin ortalamalarına göre **şüpheli derecede yüksektir.** Sahadaki personeller sisteme (örneğin 10 doz yerine yanlışlıkla 100 doz) gibi hatalı veri girmiş olabilir. 
+                *Yanlışlıkla çok yüksek miktarda aşı sevkiyatı yapmamak için, bu kurumlara gönderim yapmadan önce **telefonla arayarak teyit etmeniz** önerilir.*
+                """)
+                # Anomali tablosunu göster
+                st.dataframe(df_anomali[['Ilce', 'Birim', 'Urun', 'Tip', 'Gunluk_Hiz', 'Tuketim', 'Gonderilecek']].style.format({'Gunluk_Hiz': '{:.1f}'}), use_container_width=True)
+                st.markdown("---")
+            # --------------------------------------------------
+
             st.caption("Aşağıdaki liste sadece aşı gönderilmesi gereken (İhtiyaç > 0) kurumları içerir.")
             f1_sevk = df_f[df_f['Gonderilecek'] > 0].copy()
             durum_sirasi = {"🚨 KRİTİK": 0, "✅ Yeterli": 1, "⚠️ AŞIRI": 2}
