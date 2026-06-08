@@ -18,36 +18,58 @@ def clean_number(x):
         return x.replace('.', '').replace(',', '').replace('"', '').strip()
     return x
 
-def get_dates_from_csv(file):
-    try:
-        file.seek(0)
+# Gelişmiş Tarih Okuyucu (CSV ve Excel Destekli)
+def get_dates_from_file(file_obj):
+    file_ext = file_obj.name.split('.')[-1].lower()
+    start_date, end_date = None, None
+    date_pattern = re.compile(r'\d{2}\.\d{2}\.\d{4}')
+    
+    if file_ext in ['xlsx', 'xls']:
         try:
-            lines = [file.readline().decode('utf-8') for _ in range(15)]
+            file_obj.seek(0)
+            df_temp = pd.read_excel(file_obj, header=None, nrows=15)
+            for i in range(len(df_temp)):
+                for j in range(len(df_temp.columns)):
+                    val = str(df_temp.iloc[i, j])
+                    if "Baslangiç Tarihi" in val or "Başlangıç Tarihi" in val:
+                        m = date_pattern.search(val)
+                        if m: start_date = m.group()
+                        else:
+                            try:
+                                m2 = date_pattern.search(str(df_temp.iloc[i, j+1]))
+                                if m2: start_date = m2.group()
+                            except: pass
+                    if "Bitis Tarihi" in val or "Bitiş Tarihi" in val:
+                        m = date_pattern.search(val)
+                        if m: end_date = m.group()
+                        else:
+                            try:
+                                m2 = date_pattern.search(str(df_temp.iloc[i, j+1]))
+                                if m2: end_date = m2.group()
+                            except: pass
+        except: pass
+    else:
+        file_obj.seek(0)
+        try:
+            lines = [file_obj.readline().decode('utf-8') for _ in range(15)]
         except:
-            file.seek(0)
-            lines = [file.readline().decode('iso-8859-9') for _ in range(15)]
-            
-        file.seek(0)
-        start_date, end_date = None, None
-        date_pattern = re.compile(r'\d{2}\.\d{2}\.\d{4}')
+            file_obj.seek(0)
+            lines = [file_obj.readline().decode('iso-8859-9') for _ in range(15)]
         
         for line in lines:
-            if "Baslangiç Tarihi" in line:
+            if "Baslangiç Tarihi" in line or "Başlangıç Tarihi" in line:
                 match = date_pattern.search(line)
-                if match:
-                    start_date = match.group()
-            if "Bitis Tarihi" in line:
+                if match: start_date = match.group()
+            if "Bitis Tarihi" in line or "Bitiş Tarihi" in line:
                 match = date_pattern.search(line)
-                if match:
-                    end_date = match.group()
-                    
-        if start_date and end_date:
+                if match: end_date = match.group()
+    
+    if start_date and end_date:
+        try:
             d1 = datetime.strptime(start_date, "%d.%m.%Y")
             d2 = datetime.strptime(end_date, "%d.%m.%Y")
-            diff = (d2 - d1).days + 1
-            return diff, start_date, end_date
-    except Exception:
-        pass
+            return (d2 - d1).days + 1, start_date, end_date
+        except: pass
     return 91, None, None
 
 def to_excel(df):
@@ -91,19 +113,72 @@ def to_pdf(df, title):
 
 # --- ÖZELLEŞTİRİLMİŞ YUVARLAMA FONKSİYONU ---
 def ozellestirilmis_yuvarlama(val):
-    if val <= 0:
-        return 0
+    if val <= 0: return 0
+    def math_round(n): return int(n + 0.5)
     
-    # Standart matematiksel yuvarlama (x.5 -> x+1)
-    def math_round(n):
-        return int(n + 0.5)
+    if val < 100: return math_round(val / 10) * 10
+    elif val < 500: return math_round(val / 50) * 50
+    else: return math_round(val / 100) * 100
+
+# --- EVRENSEL VERİ OKUYUCU (EXCEL VE CSV) ---
+def load_robust_data(file_obj, keywords):
+    ext = file_obj.name.split('.')[-1].lower()
     
-    if val < 100:
-        return math_round(val / 10) * 10
-    elif val < 500:
-        return math_round(val / 50) * 50
+    # EXCEL İSE
+    if ext in ['xlsx', 'xls']:
+        file_obj.seek(0)
+        try:
+            df_temp = pd.read_excel(file_obj, header=None, nrows=20)
+            header_idx = 0
+            for i in range(len(df_temp)):
+                row_str = " ".join([str(x).upper().replace('İ', 'I') for x in df_temp.iloc[i].values if pd.notnull(x)])
+                if any(kw in row_str for kw in keywords):
+                    header_idx = i
+                    break
+            file_obj.seek(0)
+            df = pd.read_excel(file_obj, header=header_idx, dtype=str)
+            return df
+        except Exception as e:
+            if 'openpyxl' in str(e).lower():
+                st.error("Excel dosyasını okuyabilmek için sunucuda 'openpyxl' paketi eksik. Dosyayı CSV'ye dönüştürüp yüklemeyi deneyin.")
+            else:
+                st.error(f"Excel okuma hatası: {e}")
+            return pd.DataFrame()
+            
+    # CSV İSE
     else:
-        return math_round(val / 100) * 100
+        file_obj.seek(0)
+        header_idx = 0
+        try:
+            for i in range(20):
+                raw_line = file_obj.readline()
+                try: line = raw_line.decode('utf-8').upper().replace('İ', 'I')
+                except: line = raw_line.decode('iso-8859-9', errors='ignore').upper().replace('İ', 'I')
+                if any(kw in line for kw in keywords):
+                    header_idx = i
+                    break
+        except: pass
+        
+        methods = [
+            {'encoding': 'utf-8', 'sep': ';'},
+            {'encoding': 'iso-8859-9', 'sep': ';'},
+            {'encoding': 'utf-8', 'sep': ','},
+            {'encoding': 'iso-8859-9', 'sep': ','},
+            {'encoding': 'iso-8859-9', 'sep': ';', 'quoting': 3, 'on_bad_lines': 'skip'},
+            {'encoding': 'iso-8859-9', 'sep': ',', 'quoting': 3, 'on_bad_lines': 'skip'},
+            {'encoding': 'utf-8', 'sep': None, 'engine': 'python'}
+        ]
+        
+        for m in methods:
+            try:
+                file_obj.seek(0)
+                kw = {k: v for k, v in m.items() if k != 'encoding'}
+                df = pd.read_csv(file_obj, header=header_idx, encoding=m['encoding'], dtype=str, **kw)
+                if len(df.columns) > 1: return df
+            except: continue
+            
+        file_obj.seek(0)
+        return pd.read_csv(file_obj, header=header_idx, encoding='iso-8859-9', sep=';', dtype=str, on_bad_lines='skip')
 
 # --- YAN MENÜ ---
 st.sidebar.header("⚙️ Planlama Ayarları")
@@ -127,63 +202,26 @@ with st.sidebar.expander("🛠️ Gelişmiş / İnce Ayarlar"):
 st.markdown("### 📂 Dosya Yükleme")
 col_u1, col_u2 = st.columns(2)
 with col_u1:
-    tuketim_file = st.file_uploader("📂 Dönemsel Tüketim Raporu (CSV)", type=["csv"])
+    tuketim_file = st.file_uploader("📂 Dönemsel Tüketim Raporu", type=["csv", "xlsx", "xls"])
 with col_u2:
-    stok_file = st.file_uploader("📂 Stok Durum Raporu Birim Bazında (CSV)", type=["csv"])
+    stok_file = st.file_uploader("📂 Stok Durum Raporu Birim Bazında", type=["csv", "xlsx", "xls"])
 
 # --- ANA PROGRAM ---
 if tuketim_file and stok_file:
     try:
-        oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
+        oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_file(tuketim_file)
         
-        # --- DİNAMİK BAŞLIK (HEADER) TESPİTİ ---
-        def get_header_idx(file_obj, keywords):
-            file_obj.seek(0)
-            for i in range(20):
-                raw_line = file_obj.readline()
-                try:
-                    line = raw_line.decode('utf-8').upper().replace('İ', 'I')
-                except:
-                    line = raw_line.decode('iso-8859-9', errors='ignore').upper().replace('İ', 'I')
-                for kw in keywords:
-                    if kw in line:
-                        file_obj.seek(0)
-                        return i
-            file_obj.seek(0)
-            return 0
+        # Verileri Yükle
+        df_raw_t = load_robust_data(tuketim_file, ['UYGULANAN', 'ZAYI', 'URUN TANIMI'])
+        df_raw_s = load_robust_data(stok_file, ['QR KOD', 'KALAN DOZ', 'TOPLAM DOZ', 'BIRIM ADI', 'BIRIM TIPI'])
+        
+        if df_raw_t.empty or df_raw_s.empty:
+            st.warning("Yüklenen dosyalardan veri alınamadı. Dosyaların doğru olduğundan emin olun.")
+            st.stop()
             
-        tuketim_idx = get_header_idx(tuketim_file, ['UYGULANAN', 'ZAYI', 'URUN TANIMI'])
-        stok_idx = get_header_idx(stok_file, ['QR KOD', 'KALAN DOZ', 'TOPLAM DOZ', 'BIRIM ADI', 'BIRIM TIPI'])
-
-        # --- GÜÇLENDİRİLMİŞ CSV OKUMA ---
-        def robust_read_csv(file, header_row):
-            methods = [
-                {'encoding': 'utf-8', 'sep': ';'},
-                {'encoding': 'iso-8859-9', 'sep': ';'},
-                {'encoding': 'utf-8', 'sep': ','},
-                {'encoding': 'iso-8859-9', 'sep': ','},
-                {'encoding': 'iso-8859-9', 'sep': ';', 'quoting': 3, 'on_bad_lines': 'skip'},
-                {'encoding': 'iso-8859-9', 'sep': ',', 'quoting': 3, 'on_bad_lines': 'skip'},
-                {'encoding': 'utf-8', 'sep': None, 'engine': 'python'}
-            ]
-            for m in methods:
-                try:
-                    file.seek(0)
-                    kw = {k: v for k, v in m.items() if k != 'encoding'}
-                    df = pd.read_csv(file, header=header_row, encoding=m['encoding'], dtype=str, **kw)
-                    if len(df.columns) < 2: continue
-                    return df
-                except Exception:
-                    continue
-            file.seek(0)
-            return pd.read_csv(file, header=header_row, encoding='iso-8859-9', sep=';', dtype=str, on_bad_lines='skip')
-
-        df_raw_t = robust_read_csv(tuketim_file, tuketim_idx)
-        df_raw_s = robust_read_csv(stok_file, stok_idx)
-        
         # Temizlik
-        df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
-        df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
+        df_raw_t.columns = [str(c).strip() for c in df_raw_t.columns]
+        df_raw_s.columns = [str(c).strip() for c in df_raw_s.columns]
 
         # --- TÜKETİM RAPORU SÜTUN ONARIMI ---
         def smart_fix_columns(df):
@@ -192,10 +230,10 @@ if tuketim_file and stok_file:
                 col_upper = col.upper().replace('İ', 'I')
                 col_clean = col.replace('"', '').strip()
                 if 'ZAYI' in col_upper: rename_map[col] = 'ZAYI'
-                elif (col_upper.startswith('IL') or col_upper.startswith('IL')) and col_upper.endswith('E'): rename_map[col] = 'ILÇE'
+                elif (col_upper.startswith('IL') or col_upper.startswith('İL')) and col_upper.endswith('E'): rename_map[col] = 'ILÇE'
                 elif 'BIRIM' in col_upper and 'ADI' in col_upper: rename_map[col] = 'BIRIM'
                 elif 'BIRIM' in col_upper and 'TIPI' in col_upper: rename_map[col] = 'BIRIM TIPI'
-                elif col_upper == 'BIRIM' or col_upper == 'BIRIM': rename_map[col] = 'BIRIM'
+                elif col_upper == 'BIRIM' or col_upper == 'BİRİM': rename_map[col] = 'BIRIM'
                 elif 'TAN' in col_upper and 'IMI' in col_upper: rename_map[col] = 'ÜRÜN TANIMI'
                 elif 'TOPLAM' in col_upper and 'DOZ' in col_upper and 'UYGULANAN' not in col_upper and 'ZAYI' not in col_upper: rename_map[col] = 'TOPLAM DOZ'
             if rename_map: df.rename(columns=rename_map, inplace=True)
@@ -206,7 +244,7 @@ if tuketim_file and stok_file:
         # --- STOK RAPORU YENİ & ESKİ FORMAT KONTROLÜ ---
         stok_cols_upper = [str(c).upper().replace('İ', 'I') for c in df_raw_s.columns]
         if 'QR KOD' in stok_cols_upper or 'KALAN DOZ' in stok_cols_upper:
-            # YENİ FORMAT - Satır satır ürünleri toplayarak grupla
+            # YENİ (DETAYLI/BARKODLU) FORMAT
             rename_map_s = {}
             for col in df_raw_s.columns:
                 cu = col.upper().replace('İ', 'I')
@@ -223,9 +261,9 @@ if tuketim_file and stok_file:
             if 'BIRIM' in df_raw_s.columns and 'ÜRÜN TANIMI' in df_raw_s.columns:
                 df_raw_s = df_raw_s.groupby(['BIRIM', 'ÜRÜN TANIMI'], as_index=False)['TOPLAM DOZ'].sum()
             
-            # İlçe bilgisi yeni formatta olmadığı için tüketim raporundan (df_raw_t) eşleştirerek çek
+            # İlçe bilgisi eşleştirme
             if 'ILÇE' in df_raw_t.columns and 'BIRIM' in df_raw_t.columns:
-                mapping = df_raw_t[['BIRIM', 'ILÇE']].dropna().drop_duplicates()
+                mapping = df_raw_t[['BIRIM', 'ILÇE']].dropna().drop_duplicates(subset=['BIRIM'])
                 df_raw_s = pd.merge(df_raw_s, mapping, on='BIRIM', how='left')
                 df_raw_s['ILÇE'] = df_raw_s['ILÇE'].fillna(df_raw_s['BIRIM'].apply(lambda x: str(x).split()[0] if pd.notnull(x) else 'BILINMIYOR'))
             else:
@@ -294,14 +332,10 @@ if tuketim_file and stok_file:
             hiz = row['Gunluk_Hiz']
             tip = str(row['Tip']).upper()
             
-            if 'ASM' in tip and hiz > 30:
-                return True
-            elif 'TSM' in tip and hiz > 150:
-                return True
-            elif 'SON KULLANICI' in tip and hiz > 150:
-                return True
-            elif hiz > 500: 
-                return True
+            if 'ASM' in tip and hiz > 30: return True
+            elif 'TSM' in tip and hiz > 150: return True
+            elif 'SON KULLANICI' in tip and hiz > 150: return True
+            elif hiz > 500: return True
             return False
 
         res_df['Veri_Anomalisi'] = res_df.apply(anomali_tespit, axis=1)
