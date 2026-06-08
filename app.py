@@ -136,6 +136,25 @@ if tuketim_file and stok_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_csv(tuketim_file)
         
+        # --- DİNAMİK BAŞLIK (HEADER) TESPİTİ ---
+        def get_header_idx(file_obj, keywords):
+            file_obj.seek(0)
+            for i in range(20):
+                raw_line = file_obj.readline()
+                try:
+                    line = raw_line.decode('utf-8').upper().replace('İ', 'I')
+                except:
+                    line = raw_line.decode('iso-8859-9', errors='ignore').upper().replace('İ', 'I')
+                for kw in keywords:
+                    if kw in line:
+                        file_obj.seek(0)
+                        return i
+            file_obj.seek(0)
+            return 0
+            
+        tuketim_idx = get_header_idx(tuketim_file, ['UYGULANAN', 'ZAYI', 'URUN TANIMI'])
+        stok_idx = get_header_idx(stok_file, ['QR KOD', 'KALAN DOZ', 'TOPLAM DOZ', 'BIRIM ADI', 'BIRIM TIPI'])
+
         # --- GÜÇLENDİRİLMİŞ CSV OKUMA ---
         def robust_read_csv(file, header_row):
             methods = [
@@ -159,36 +178,73 @@ if tuketim_file and stok_file:
             file.seek(0)
             return pd.read_csv(file, header=header_row, encoding='iso-8859-9', sep=';', dtype=str, on_bad_lines='skip')
 
-        df_raw_t = robust_read_csv(tuketim_file, 7)
-        df_raw_s = robust_read_csv(stok_file, 3)
+        df_raw_t = robust_read_csv(tuketim_file, tuketim_idx)
+        df_raw_s = robust_read_csv(stok_file, stok_idx)
         
         # Temizlik
         df_raw_t.columns = [c.strip() for c in df_raw_t.columns]
         df_raw_s.columns = [c.strip() for c in df_raw_s.columns]
 
-        # --- AKILLI SÜTUN ONARICI ---
+        # --- TÜKETİM RAPORU SÜTUN ONARIMI ---
         def smart_fix_columns(df):
             rename_map = {}
             for col in df.columns:
-                col_upper = col.upper()
+                col_upper = col.upper().replace('İ', 'I')
                 col_clean = col.replace('"', '').strip()
                 if 'ZAYI' in col_upper: rename_map[col] = 'ZAYI'
-                elif (col_upper.startswith('IL') or col_upper.startswith('İL')) and col_upper.endswith('E'): rename_map[col] = 'ILÇE'
-                elif 'BIRIM' in col_upper and 'ADI' in col_upper: rename_map[col] = 'BIRIM ADI'
+                elif (col_upper.startswith('IL') or col_upper.startswith('IL')) and col_upper.endswith('E'): rename_map[col] = 'ILÇE'
+                elif 'BIRIM' in col_upper and 'ADI' in col_upper: rename_map[col] = 'BIRIM'
                 elif 'BIRIM' in col_upper and 'TIPI' in col_upper: rename_map[col] = 'BIRIM TIPI'
+                elif col_upper == 'BIRIM' or col_upper == 'BIRIM': rename_map[col] = 'BIRIM'
                 elif 'TAN' in col_upper and 'IMI' in col_upper: rename_map[col] = 'ÜRÜN TANIMI'
                 elif 'TOPLAM' in col_upper and 'DOZ' in col_upper and 'UYGULANAN' not in col_upper and 'ZAYI' not in col_upper: rename_map[col] = 'TOPLAM DOZ'
             if rename_map: df.rename(columns=rename_map, inplace=True)
             return df
 
-        df_raw_s = smart_fix_columns(df_raw_s)
         df_raw_t = smart_fix_columns(df_raw_t)
         
+        # --- STOK RAPORU YENİ & ESKİ FORMAT KONTROLÜ ---
+        stok_cols_upper = [str(c).upper().replace('İ', 'I') for c in df_raw_s.columns]
+        if 'QR KOD' in stok_cols_upper or 'KALAN DOZ' in stok_cols_upper:
+            # YENİ FORMAT - Satır satır ürünleri toplayarak grupla
+            rename_map_s = {}
+            for col in df_raw_s.columns:
+                cu = col.upper().replace('İ', 'I')
+                if cu == 'BIRIM': rename_map_s[col] = 'BIRIM'
+                elif cu == 'URUN' or cu == 'ÜRÜN': rename_map_s[col] = 'ÜRÜN TANIMI'
+                elif cu == 'KALAN DOZ': rename_map_s[col] = 'TOPLAM DOZ'
+            df_raw_s.rename(columns=rename_map_s, inplace=True)
+            
+            if 'TOPLAM DOZ' in df_raw_s.columns:
+                df_raw_s['TOPLAM DOZ'] = pd.to_numeric(df_raw_s['TOPLAM DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
+            else:
+                df_raw_s['TOPLAM DOZ'] = 0
+                
+            if 'BIRIM' in df_raw_s.columns and 'ÜRÜN TANIMI' in df_raw_s.columns:
+                df_raw_s = df_raw_s.groupby(['BIRIM', 'ÜRÜN TANIMI'], as_index=False)['TOPLAM DOZ'].sum()
+            
+            # İlçe bilgisi yeni formatta olmadığı için tüketim raporundan (df_raw_t) eşleştirerek çek
+            if 'ILÇE' in df_raw_t.columns and 'BIRIM' in df_raw_t.columns:
+                mapping = df_raw_t[['BIRIM', 'ILÇE']].dropna().drop_duplicates()
+                df_raw_s = pd.merge(df_raw_s, mapping, on='BIRIM', how='left')
+                df_raw_s['ILÇE'] = df_raw_s['ILÇE'].fillna(df_raw_s['BIRIM'].apply(lambda x: str(x).split()[0] if pd.notnull(x) else 'BILINMIYOR'))
+            else:
+                df_raw_s['ILÇE'] = df_raw_s['BIRIM'].apply(lambda x: str(x).split()[0] if pd.notnull(x) else 'BILINMIYOR')
+                
+            df_raw_s['BIRIM TIPI'] = 'Bilinmiyor'
+        else:
+            # ESKİ FORMAT
+            df_raw_s = smart_fix_columns(df_raw_s)
+
         if 'BIRIM ADI' in df_raw_s.columns: df_raw_s.rename(columns={'BIRIM ADI': 'BIRIM'}, inplace=True)
 
         # Veri Doldurma
         df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
-        df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']].ffill()
+        if 'BIRIM TIPI' in df_raw_s.columns:
+            df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']].ffill()
+        else:
+            df_raw_s[['ILÇE', 'BIRIM']] = df_raw_s[['ILÇE', 'BIRIM']].ffill()
+            df_raw_s['BIRIM TIPI'] = 'Bilinmiyor'
         
         # Sayısal Dönüşümler
         df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
@@ -238,14 +294,13 @@ if tuketim_file and stok_file:
             hiz = row['Gunluk_Hiz']
             tip = str(row['Tip']).upper()
             
-            # Günlük tüketim hızına göre anomali sınırları
             if 'ASM' in tip and hiz > 30:
                 return True
             elif 'TSM' in tip and hiz > 150:
                 return True
             elif 'SON KULLANICI' in tip and hiz > 150:
                 return True
-            elif hiz > 500: # Genel çok yüksek tüketim (Hatalı sıfır eklentisi vb.)
+            elif hiz > 500: 
                 return True
             return False
 
@@ -380,7 +435,6 @@ if tuketim_file and stok_file:
         # TAB 3: SEVKİYAT PLANI
         with tab3:
             
-            # --- YENİ: ANOMALİ (HATALI VERİ) GÖSTERGE TABLOSU ---
             df_anomali = df_f[(df_f['Veri_Anomalisi'] == True) & (df_f['Gonderilecek'] > 0)].copy()
             
             if not df_anomali.empty:
@@ -389,10 +443,8 @@ if tuketim_file and stok_file:
                 Aşağıdaki birimlerin **günlük aşı tüketim hızları**, bulundukları kurum tipinin (ASM vb.) rutin ortalamalarına göre **şüpheli derecede yüksektir.** Sahadaki personeller sisteme (örneğin 10 doz yerine yanlışlıkla 100 doz) gibi hatalı veri girmiş olabilir. 
                 *Yanlışlıkla çok yüksek miktarda aşı sevkiyatı yapmamak için, bu kurumlara gönderim yapmadan önce **telefonla arayarak teyit etmeniz** önerilir.*
                 """)
-                # Anomali tablosunu göster
                 st.dataframe(df_anomali[['Ilce', 'Birim', 'Urun', 'Tip', 'Gunluk_Hiz', 'Tuketim', 'Gonderilecek']].style.format({'Gunluk_Hiz': '{:.1f}'}), use_container_width=True)
                 st.markdown("---")
-            # --------------------------------------------------
 
             st.caption("Aşağıdaki liste sadece aşı gönderilmesi gereken (İhtiyaç > 0) kurumları içerir.")
             f1_sevk = df_f[df_f['Gonderilecek'] > 0].copy()
