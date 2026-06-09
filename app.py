@@ -139,10 +139,7 @@ def load_robust_data(file_obj, keywords):
             df = pd.read_excel(file_obj, header=header_idx, dtype=str)
             return df
         except Exception as e:
-            if 'openpyxl' in str(e).lower():
-                st.error("Excel dosyasını okuyabilmek için sunucuda 'openpyxl' paketi eksik. Dosyayı CSV'ye dönüştürüp yüklemeyi deneyin.")
-            else:
-                st.error(f"Excel okuma hatası: {e}")
+            st.error(f"Excel okuma hatası: {e}")
             return pd.DataFrame()
             
     # CSV İSE
@@ -200,30 +197,46 @@ with st.sidebar.expander("🛠️ Gelişmiş / İnce Ayarlar"):
 
 # --- DOSYA YÜKLEME ALANI ---
 st.markdown("### 📂 Dosya Yükleme")
-col_u1, col_u2 = st.columns(2)
+col_u1, col_u2, col_u3 = st.columns(3)
 with col_u1:
-    tuketim_file = st.file_uploader("📂 Dönemsel Tüketim Raporu", type=["csv", "xlsx", "xls"])
+    tuketim_file = st.file_uploader("📂 Tüketim Raporu", type=["csv", "xlsx", "xls"])
 with col_u2:
-    stok_file = st.file_uploader("📂 Stok Durum Raporu Birim Bazında", type=["csv", "xlsx", "xls"])
+    stok_file = st.file_uploader("📂 Stok Raporu", type=["csv", "xlsx", "xls"])
+with col_u3:
+    birim_file = st.file_uploader("📂 Birimler Listesi (Master)", type=["csv", "xlsx", "xls"])
 
 # --- ANA PROGRAM ---
-if tuketim_file and stok_file:
+if tuketim_file and stok_file and birim_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_file(tuketim_file)
         
-        # Verileri Yükle
+        # 1. MASTER BİRİMLER LİSTESİNİ YÜKLE VE HAZIRLA
+        df_raw_b = load_robust_data(birim_file, ['BIRIM ADI', 'BIRIM TIPI', 'ILÇE'])
+        df_raw_b.columns = [str(c).strip().upper().replace('İ', 'I') for c in df_raw_b.columns]
+        
+        rename_b = {}
+        for col in df_raw_b.columns:
+            if col == 'BIRIM ADI': rename_b[col] = 'BIRIM'
+            elif col == 'BIRIM TIPI': rename_b[col] = 'TIP_MASTER'
+            elif col == 'ILÇE': rename_b[col] = 'ILÇE_MASTER'
+            elif col == 'UST BIRIM': rename_b[col] = 'UST_BIRIM_MASTER'
+        df_raw_b.rename(columns=rename_b, inplace=True)
+        
+        req_cols = ['BIRIM']
+        if 'TIP_MASTER' in df_raw_b.columns: req_cols.append('TIP_MASTER')
+        if 'ILÇE_MASTER' in df_raw_b.columns: req_cols.append('ILÇE_MASTER')
+        if 'UST_BIRIM_MASTER' in df_raw_b.columns: req_cols.append('UST_BIRIM_MASTER')
+        
+        birim_master = df_raw_b[req_cols].drop_duplicates(subset=['BIRIM']).copy()
+        
+        # 2. TÜKETİM VE STOK VERİLERİNİ YÜKLE
         df_raw_t = load_robust_data(tuketim_file, ['UYGULANAN', 'ZAYI', 'URUN TANIMI'])
         df_raw_s = load_robust_data(stok_file, ['QR KOD', 'KALAN DOZ', 'TOPLAM DOZ', 'BIRIM ADI', 'BIRIM TIPI'])
         
-        if df_raw_t.empty or df_raw_s.empty:
-            st.warning("Yüklenen dosyalardan veri alınamadı. Dosyaların doğru olduğundan emin olun.")
-            st.stop()
-            
-        # Temizlik
         df_raw_t.columns = [str(c).strip() for c in df_raw_t.columns]
         df_raw_s.columns = [str(c).strip() for c in df_raw_s.columns]
 
-        # --- TÜKETİM RAPORU SÜTUN ONARIMI ---
+        # --- SÜTUN ONARIMI ---
         def smart_fix_columns(df):
             rename_map = {}
             for col in df.columns:
@@ -241,10 +254,9 @@ if tuketim_file and stok_file:
 
         df_raw_t = smart_fix_columns(df_raw_t)
         
-        # --- STOK RAPORU YENİ & ESKİ FORMAT KONTROLÜ ---
+        # --- STOK YENİ FORMAT (BARKODLU) KONTROLÜ ---
         stok_cols_upper = [str(c).upper().replace('İ', 'I') for c in df_raw_s.columns]
         if 'QR KOD' in stok_cols_upper or 'KALAN DOZ' in stok_cols_upper:
-            # YENİ (DETAYLI/BARKODLU) FORMAT
             rename_map_s = {}
             for col in df_raw_s.columns:
                 cu = col.upper().replace('İ', 'I')
@@ -260,38 +272,36 @@ if tuketim_file and stok_file:
                 
             if 'BIRIM' in df_raw_s.columns and 'ÜRÜN TANIMI' in df_raw_s.columns:
                 df_raw_s = df_raw_s.groupby(['BIRIM', 'ÜRÜN TANIMI'], as_index=False)['TOPLAM DOZ'].sum()
-            
-            # İlçe bilgisi eşleştirme
-            if 'ILÇE' in df_raw_t.columns and 'BIRIM' in df_raw_t.columns:
-                mapping = df_raw_t[['BIRIM', 'ILÇE']].dropna().drop_duplicates(subset=['BIRIM'])
-                df_raw_s = pd.merge(df_raw_s, mapping, on='BIRIM', how='left')
-                df_raw_s['ILÇE'] = df_raw_s['ILÇE'].fillna(df_raw_s['BIRIM'].apply(lambda x: str(x).split()[0] if pd.notnull(x) else 'BILINMIYOR'))
-            else:
-                df_raw_s['ILÇE'] = df_raw_s['BIRIM'].apply(lambda x: str(x).split()[0] if pd.notnull(x) else 'BILINMIYOR')
-                
-            df_raw_s['BIRIM TIPI'] = 'Bilinmiyor'
         else:
-            # ESKİ FORMAT
             df_raw_s = smart_fix_columns(df_raw_s)
+            if 'BIRIM ADI' in df_raw_s.columns: df_raw_s.rename(columns={'BIRIM ADI': 'BIRIM'}, inplace=True)
 
-        if 'BIRIM ADI' in df_raw_s.columns: df_raw_s.rename(columns={'BIRIM ADI': 'BIRIM'}, inplace=True)
-
-        # Veri Doldurma
-        df_raw_t[['ILÇE', 'BIRIM']] = df_raw_t[['ILÇE', 'BIRIM']].ffill()
-        if 'BIRIM TIPI' in df_raw_s.columns:
-            df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']] = df_raw_s[['ILÇE', 'BIRIM', 'BIRIM TIPI']].ffill()
-        else:
-            df_raw_s[['ILÇE', 'BIRIM']] = df_raw_s[['ILÇE', 'BIRIM']].ffill()
-            df_raw_s['BIRIM TIPI'] = 'Bilinmiyor'
+        # 3. VERİLERİ BİRİMLER LİSTESİ (MASTER) İLE SABİTLEME
+        # Tüketim verisine İlçe ve Birim Tipini bas
+        if 'ILÇE' in df_raw_t.columns: df_raw_t.drop(columns=['ILÇE'], inplace=True)
+        if 'BIRIM TIPI' in df_raw_t.columns: df_raw_t.drop(columns=['BIRIM TIPI'], inplace=True)
+        df_raw_t = pd.merge(df_raw_t, birim_master, on='BIRIM', how='left')
+        if 'ILÇE_MASTER' in df_raw_t.columns: df_raw_t.rename(columns={'ILÇE_MASTER': 'ILÇE'}, inplace=True)
+        if 'TIP_MASTER' in df_raw_t.columns: df_raw_t.rename(columns={'TIP_MASTER': 'BIRIM TIPI'}, inplace=True)
         
-        # Sayısal Dönüşümler
-        df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0)
+        # Stok verisine İlçe ve Birim Tipini bas
+        if 'ILÇE' in df_raw_s.columns: df_raw_s.drop(columns=['ILÇE'], inplace=True)
+        if 'BIRIM TIPI' in df_raw_s.columns: df_raw_s.drop(columns=['BIRIM TIPI'], inplace=True)
+        df_raw_s = pd.merge(df_raw_s, birim_master, on='BIRIM', how='left')
+        if 'ILÇE_MASTER' in df_raw_s.columns: df_raw_s.rename(columns={'ILÇE_MASTER': 'ILÇE'}, inplace=True)
+        if 'TIP_MASTER' in df_raw_s.columns: df_raw_s.rename(columns={'TIP_MASTER': 'BIRIM TIPI'}, inplace=True)
+
+        # Boşlukları doldur
+        df_raw_t['ILÇE'] = df_raw_t['ILÇE'].fillna('BİLİNMİYOR')
+        df_raw_s['ILÇE'] = df_raw_s['ILÇE'].fillna('BİLİNMİYOR')
+        
+        df_raw_t['Tuketim'] = pd.to_numeric(df_raw_t['UYGULANAN DOZ'].astype(str).apply(clean_number), errors='coerce').fillna(0) if 'UYGULANAN DOZ' in df_raw_t.columns else 0
         df_raw_t['Zayi'] = pd.to_numeric(df_raw_t['ZAYI'].astype(str).apply(clean_number), errors='coerce').fillna(0) if 'ZAYI' in df_raw_t.columns else 0
 
         stok_col = 'TOPLAM DOZ' if 'TOPLAM DOZ' in df_raw_s.columns else df_raw_s.columns[-1]
         df_raw_s['Stok'] = pd.to_numeric(df_raw_s[stok_col].astype(str).apply(clean_number), errors='coerce').fillna(0)
 
-        # --- KRİTİK AYRIŞTIRMA ---
+        # --- KRİTİK AYRIŞTIRMA (MASTER İLÇE VE İSİMLERE GÖRE) ---
         mask_ism_stok = (df_raw_s['ILÇE'].str.contains('FATIH', case=False, na=False)) & (df_raw_s['BIRIM'].str.contains('ISM', case=False, na=False))
         mask_ism_tuketim = (df_raw_t['ILÇE'].str.contains('FATIH', case=False, na=False)) & (df_raw_t['BIRIM'].str.contains('ISM', case=False, na=False))
 
@@ -300,21 +310,27 @@ if tuketim_file and stok_file:
         df_s_ism = df_raw_s[mask_ism_stok].copy()
         df_t_ism = df_raw_t[mask_ism_tuketim].copy()
 
-        # --- MERGE VE HESAPLAMA ---
+        # --- GRUPLAMA VE BİRLEŞTİRME ---
         df_c = df_t_saha.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
         df_c.columns = ['Ilce', 'Birim', 'Urun', 'Tuketim', 'Zayi']
         
-        df_s_grp = df_s_saha.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI', 'BIRIM TIPI'])['Stok'].sum().reset_index()
-        df_s_grp.columns = ['Ilce', 'Birim', 'Urun', 'Tip', 'Stok']
+        df_s_grp = df_s_saha.groupby(['ILÇE', 'BIRIM', 'ÜRÜN TANIMI'])['Stok'].sum().reset_index()
+        df_s_grp.columns = ['Ilce', 'Birim', 'Urun', 'Stok']
         
         res_df = pd.merge(df_c, df_s_grp, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
         
-        # --- EKSİK TİPLERİ ONARMA ---
+        # Son tabloya Ana Tip ve Üst Birim bilgilerini kalıcı ekle
+        bm_reduced = birim_master.rename(columns={'TIP_MASTER': 'Tip', 'UST_BIRIM_MASTER': 'Ust_Birim'})
+        cols_to_merge = ['BIRIM']
+        if 'Tip' in bm_reduced.columns: cols_to_merge.append('Tip')
+        if 'Ust_Birim' in bm_reduced.columns: cols_to_merge.append('Ust_Birim')
+        
+        res_df = pd.merge(res_df, bm_reduced[cols_to_merge], left_on='Birim', right_on='BIRIM', how='left')
+        res_df.drop(columns=['BIRIM'], inplace=True)
+        
         def infer_tip(row):
-            current_tip = str(row['Tip']).upper()
-            if row['Tip'] != 0 and row['Tip'] != 'Bilinmiyor' and current_tip != 'NAN':
+            if pd.notnull(row.get('Tip')) and str(row.get('Tip')).strip() != '':
                 return row['Tip']
-            
             name = str(row['Birim']).upper()
             if 'ASM' in name or 'AILE SAGLIGI' in name: return 'ASM'
             if 'TSM' in name or 'TOPLUM SAGLIGI' in name: return 'TSM'
@@ -324,6 +340,8 @@ if tuketim_file and stok_file:
             return 'Bilinmiyor'
 
         res_df['Tip'] = res_df.apply(infer_tip, axis=1)
+        if 'Ust_Birim' not in res_df.columns: res_df['Ust_Birim'] = '-'
+        res_df['Ust_Birim'] = res_df['Ust_Birim'].fillna('-')
 
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         
@@ -474,10 +492,10 @@ if tuketim_file and stok_file:
             if not df_anomali.empty:
                 st.error("🚨 **DİKKAT: Olası Hatalı Veri Girişi Tespit Edildi!**")
                 st.markdown("""
-                Aşağıdaki birimlerin **günlük aşı tüketim hızları**, bulundukları kurum tipinin (ASM vb.) rutin ortalamalarına göre **şüpheli derecede yüksektir.** Sahadaki personeller sisteme (örneğin 10 doz yerine yanlışlıkla 100 doz) gibi hatalı veri girmiş olabilir. 
+                Aşağıdaki birimlerin **günlük aşı tüketim hızları**, bulundukları kurum tipinin (ASM vb.) rutin ortalamalarına göre **şüpheli derecede yüksektir.** Sahadaki personeller sisteme hatalı veri girmiş olabilir. 
                 *Yanlışlıkla çok yüksek miktarda aşı sevkiyatı yapmamak için, bu kurumlara gönderim yapmadan önce **telefonla arayarak teyit etmeniz** önerilir.*
                 """)
-                st.dataframe(df_anomali[['Ilce', 'Birim', 'Urun', 'Tip', 'Gunluk_Hiz', 'Tuketim', 'Gonderilecek']].style.format({'Gunluk_Hiz': '{:.1f}'}), use_container_width=True)
+                st.dataframe(df_anomali[['Ilce', 'Ust_Birim', 'Birim', 'Urun', 'Tip', 'Gunluk_Hiz', 'Tuketim', 'Gonderilecek']].style.format({'Gunluk_Hiz': '{:.1f}'}), use_container_width=True)
                 st.markdown("---")
 
             st.caption("Aşağıdaki liste sadece aşı gönderilmesi gereken (İhtiyaç > 0) kurumları içerir.")
@@ -485,7 +503,9 @@ if tuketim_file and stok_file:
             durum_sirasi = {"🚨 KRİTİK": 0, "✅ Yeterli": 1, "⚠️ AŞIRI": 2}
             f1_sevk['sort_key'] = f1_sevk['Durum'].map(durum_sirasi)
             f1_sevk = f1_sevk.sort_values(['sort_key', 'Gonderilecek'], ascending=[True, False]).drop('sort_key', axis=1)
-            st.dataframe(f1_sevk[['Durum', 'Ilce', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek', 'Yetme_Suresi']], use_container_width=True)
+            
+            # Üst Birim Sütunu Dahil Edildi
+            st.dataframe(f1_sevk[['Durum', 'Ilce', 'Ust_Birim', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek', 'Yetme_Suresi']], use_container_width=True)
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 Sevkiyat Excel", to_excel(f1_sevk), "sevkiyat_plani.xlsx")
             with c2: st.download_button("📥 Sevkiyat PDF", to_pdf(f1_sevk, "Sevkiyat Plani"), "sevkiyat_plani.pdf")
@@ -494,7 +514,7 @@ if tuketim_file and stok_file:
         with tab4:
             st.caption(f"Aşağıdaki liste, {asiri_esik} günden fazla stoğu bulunan ve 'Aşırı' olarak işaretlenen **ASM ve Son Kullanıcı** birimlerini içerir.")
             f1_asiri = df_f[df_f['Durum'] == "⚠️ AŞIRI"].copy().sort_values('Yetme_Suresi', ascending=False)
-            st.dataframe(f1_asiri[['Ilce', 'Birim', 'Urun', 'Stok', 'Yetme_Suresi']], use_container_width=True)
+            st.dataframe(f1_asiri[['Ilce', 'Ust_Birim', 'Birim', 'Urun', 'Stok', 'Yetme_Suresi']], use_container_width=True)
             c3, c4 = st.columns(2)
             with c3: st.download_button("📥 İade Excel", to_excel(f1_asiri), "asiri_stok.xlsx")
             with c4: st.download_button("📥 İade PDF", to_pdf(f1_asiri, "Asiri Stok"), "asiri_stok.pdf")
@@ -503,7 +523,7 @@ if tuketim_file and stok_file:
             st.subheader("🕸️ Ölü Stok (Hiç Tüketimi Olmayan)")
             f1_olu = df_f[(df_f['Stok'] > 0) & (df_f['Tuketim'] == 0) & (df_f['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['ASM', 'SON KULLANICI'])))].copy().sort_values('Stok', ascending=False)
             if not f1_olu.empty:
-                st.dataframe(f1_olu[['Ilce', 'Birim', 'Urun', 'Stok']], use_container_width=True)
+                st.dataframe(f1_olu[['Ilce', 'Ust_Birim', 'Birim', 'Urun', 'Stok']], use_container_width=True)
                 c_olu1, c_olu2 = st.columns(2)
                 with c_olu1: st.download_button("📥 Ölü Stok Excel", to_excel(f1_olu), "olu_stok.xlsx")
                 with c_olu2: st.download_button("📥 Ölü Stok PDF", to_pdf(f1_olu, "Olu Stok"), "olu_stok.pdf")
@@ -602,4 +622,4 @@ if tuketim_file and stok_file:
     except Exception as e:
         st.error(f"Hata: {e}")
 else:
-    st.info("Lütfen dosyaları yükleyin.")
+    st.info("Lütfen dosyaları yükleyin. (3 dosya da gereklidir)")
