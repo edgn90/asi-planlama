@@ -18,35 +18,21 @@ def clean_number(x):
         return x.replace('.', '').replace(',', '').replace('"', '').strip()
     return x
 
-# Gelişmiş Tarih Okuyucu (CSV ve Excel Destekli)
+# Gelişmiş Tarih Okuyucu (Eski ve Yeni Dönem Formatlarını Destekler)
 def get_dates_from_file(file_obj):
     file_ext = file_obj.name.split('.')[-1].lower()
     start_date, end_date = None, None
-    date_pattern = re.compile(r'\d{2}\.\d{2}\.\d{4}')
+    single_date_pattern = re.compile(r'\d{2}\.\d{2}\.\d{4}')
+    period_pattern = re.compile(r'(\d{2}\.\d{2}\.\d{4})\s*-\s*(\d{2}\.\d{2}\.\d{4})')
     
+    lines = []
     if file_ext in ['xlsx', 'xls']:
         try:
             file_obj.seek(0)
             df_temp = pd.read_excel(file_obj, header=None, nrows=15)
             for i in range(len(df_temp)):
-                for j in range(len(df_temp.columns)):
-                    val = str(df_temp.iloc[i, j])
-                    if "Baslangiç Tarihi" in val or "Başlangıç Tarihi" in val:
-                        m = date_pattern.search(val)
-                        if m: start_date = m.group()
-                        else:
-                            try:
-                                m2 = date_pattern.search(str(df_temp.iloc[i, j+1]))
-                                if m2: start_date = m2.group()
-                            except: pass
-                    if "Bitis Tarihi" in val or "Bitiş Tarihi" in val:
-                        m = date_pattern.search(val)
-                        if m: end_date = m.group()
-                        else:
-                            try:
-                                m2 = date_pattern.search(str(df_temp.iloc[i, j+1]))
-                                if m2: end_date = m2.group()
-                            except: pass
+                row_vals = [str(x) for x in df_temp.iloc[i].values if pd.notnull(x)]
+                lines.append(" ".join(row_vals))
         except: pass
     else:
         file_obj.seek(0)
@@ -55,15 +41,24 @@ def get_dates_from_file(file_obj):
         except:
             file_obj.seek(0)
             lines = [file_obj.readline().decode('iso-8859-9') for _ in range(15)]
+            
+    for line in lines:
+        line_upper = line.upper().replace('İ', 'I')
+        # Yeni Format: DÖNEM: 01.05.2026 - 28.05.2026
+        if "DÖNEM" in line_upper or "DONEM" in line_upper:
+            m = period_pattern.search(line)
+            if m:
+                start_date, end_date = m.groups()
+                break
         
-        for line in lines:
-            if "Baslangiç Tarihi" in line or "Başlangıç Tarihi" in line:
-                match = date_pattern.search(line)
-                if match: start_date = match.group()
-            if "Bitis Tarihi" in line or "Bitiş Tarihi" in line:
-                match = date_pattern.search(line)
-                if match: end_date = match.group()
-    
+        # Eski Format: Başlangıç ve Bitiş ayrı ayrı
+        if "BASLANGIÇ TARIHI" in line_upper or "BAŞLANGIÇ TARİHİ" in line_upper:
+            m = single_date_pattern.search(line)
+            if m: start_date = m.group()
+        if "BITIS TARIHI" in line_upper or "BİTİŞ TARİHİ" in line_upper:
+            m = single_date_pattern.search(line)
+            if m: end_date = m.group()
+
     if start_date and end_date:
         try:
             d1 = datetime.strptime(start_date, "%d.%m.%Y")
@@ -147,7 +142,7 @@ def load_robust_data(file_obj, keywords):
         file_obj.seek(0)
         header_idx = 0
         try:
-            for i in range(20):
+            for i in range(25):
                 raw_line = file_obj.readline()
                 try: line = raw_line.decode('utf-8').upper().replace('İ', 'I')
                 except: line = raw_line.decode('iso-8859-9', errors='ignore').upper().replace('İ', 'I')
@@ -230,7 +225,8 @@ if tuketim_file and stok_file and birim_file:
         birim_master = df_raw_b[req_cols].drop_duplicates(subset=['BIRIM']).copy()
         
         # 2. TÜKETİM VE STOK VERİLERİNİ YÜKLE
-        df_raw_t = load_robust_data(tuketim_file, ['UYGULANAN', 'ZAYI', 'URUN TANIMI'])
+        # Tüketim raporu için yeni ve eski format başlıklarını destekleyen kelimeler eklendi
+        df_raw_t = load_robust_data(tuketim_file, ['UYGULANAN', 'URUN', 'ÜRÜN'])
         df_raw_s = load_robust_data(stok_file, ['QR KOD', 'KALAN DOZ', 'TOPLAM DOZ', 'BIRIM ADI', 'BIRIM TIPI'])
         
         df_raw_t.columns = [str(c).strip() for c in df_raw_t.columns]
@@ -254,6 +250,12 @@ if tuketim_file and stok_file and birim_file:
 
         df_raw_t = smart_fix_columns(df_raw_t)
         
+        # YENİ EKLENEN: Özet/Toplam satırlarını filtrele ("İL TOPLAMI" ve "-")
+        if 'ILÇE' in df_raw_t.columns:
+            df_raw_t = df_raw_t[~df_raw_t['ILÇE'].astype(str).str.upper().str.contains('TOPLAM', na=False)]
+        if 'BIRIM' in df_raw_t.columns:
+            df_raw_t = df_raw_t[df_raw_t['BIRIM'] != '-']
+
         # --- STOK YENİ FORMAT (BARKODLU) KONTROLÜ ---
         stok_cols_upper = [str(c).upper().replace('İ', 'I') for c in df_raw_s.columns]
         if 'QR KOD' in stok_cols_upper or 'KALAN DOZ' in stok_cols_upper:
@@ -504,7 +506,6 @@ if tuketim_file and stok_file and birim_file:
             f1_sevk['sort_key'] = f1_sevk['Durum'].map(durum_sirasi)
             f1_sevk = f1_sevk.sort_values(['sort_key', 'Gonderilecek'], ascending=[True, False]).drop('sort_key', axis=1)
             
-            # Üst Birim Sütunu Dahil Edildi
             st.dataframe(f1_sevk[['Durum', 'Ilce', 'Ust_Birim', 'Birim', 'Urun', 'Tuketim', 'Stok', 'Gonderilecek', 'Yetme_Suresi']], use_container_width=True)
             c1, c2 = st.columns(2)
             with c1: st.download_button("📥 Sevkiyat Excel", to_excel(f1_sevk), "sevkiyat_plani.xlsx")
