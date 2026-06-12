@@ -18,7 +18,7 @@ def clean_number(x):
         return x.replace('.', '').replace(',', '').replace('"', '').strip()
     return x
 
-# Gelişmiş Tarih Okuyucu (Eski ve Yeni Dönem Formatlarını Destekler)
+# Gelişmiş Tarih Okuyucu 
 def get_dates_from_file(file_obj):
     file_ext = file_obj.name.split('.')[-1].lower()
     start_date, end_date = None, None
@@ -44,14 +44,12 @@ def get_dates_from_file(file_obj):
             
     for line in lines:
         line_upper = line.upper().replace('İ', 'I')
-        # Yeni Format: DÖNEM: 01.05.2026 - 28.05.2026
         if "DÖNEM" in line_upper or "DONEM" in line_upper:
             m = period_pattern.search(line)
             if m:
                 start_date, end_date = m.groups()
                 break
         
-        # Eski Format: Başlangıç ve Bitiş ayrı ayrı
         if "BASLANGIÇ TARIHI" in line_upper or "BAŞLANGIÇ TARİHİ" in line_upper:
             m = single_date_pattern.search(line)
             if m: start_date = m.group()
@@ -106,7 +104,6 @@ def to_pdf(df, title):
     
     return bytes(pdf.output())
 
-# --- ÖZELLEŞTİRİLMİŞ YUVARLAMA FONKSİYONU ---
 def ozellestirilmis_yuvarlama(val):
     if val <= 0: return 0
     def math_round(n): return int(n + 0.5)
@@ -115,11 +112,10 @@ def ozellestirilmis_yuvarlama(val):
     elif val < 500: return math_round(val / 50) * 50
     else: return math_round(val / 100) * 100
 
-# --- EVRENSEL VERİ OKUYUCU (EXCEL VE CSV) ---
+# --- EVRENSEL VERİ OKUYUCU (GÜÇLENDİRİLMİŞ HATA YAKALAMA) ---
 def load_robust_data(file_obj, keywords):
     ext = file_obj.name.split('.')[-1].lower()
     
-    # EXCEL İSE
     if ext in ['xlsx', 'xls']:
         file_obj.seek(0)
         try:
@@ -134,10 +130,12 @@ def load_robust_data(file_obj, keywords):
             df = pd.read_excel(file_obj, header=header_idx, dtype=str)
             return df
         except Exception as e:
-            st.error(f"Excel okuma hatası: {e}")
-            return pd.DataFrame()
+            if "openpyxl" in str(e).lower() or "install openpyxl" in str(e).lower():
+                st.error("🚨 **Eksik Kütüphane:** Excel dosyalarını okuyabilmek için `openpyxl` kütüphanesi gereklidir. Lütfen terminalinize `pip install openpyxl` yazarak kurulumu yapın.")
+            else:
+                st.error(f"Excel okuma hatası: {e}")
+            return pd.DataFrame() # Boş döndür
             
-    # CSV İSE
     else:
         file_obj.seek(0)
         header_idx = 0
@@ -175,11 +173,9 @@ def load_robust_data(file_obj, keywords):
 # --- YAN MENÜ ---
 st.sidebar.header("⚙️ Planlama Ayarları")
 
-# 1. ANA AYAR
 st.sidebar.markdown("**1. Planlama Periyodu**")
 plan_suresi = st.sidebar.slider("Plan Süresi (Gün)", 1, 60, 10, help="Stokların kaç gün yetecek şekilde planlanacağını seçin.")
 
-# 2. GELİŞMİŞ AYARLAR
 st.sidebar.markdown("---")
 with st.sidebar.expander("🛠️ Gelişmiş / İnce Ayarlar"):
     st.info("Bu parametreler kurumsal politikalarla ilgilidir.")
@@ -205,10 +201,21 @@ if tuketim_file and stok_file and birim_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_file(tuketim_file)
         
-        # 1. MASTER BİRİMLER LİSTESİNİ YÜKLE VE HAZIRLA
+        # 1. VERİLERİ YÜKLE
         df_raw_b = load_robust_data(birim_file, ['BIRIM ADI', 'BIRIM TIPI', 'ILÇE'])
-        df_raw_b.columns = [str(c).strip().upper().replace('İ', 'I') for c in df_raw_b.columns]
+        df_raw_t = load_robust_data(tuketim_file, ['UYGULANAN', 'URUN', 'ÜRÜN'])
+        df_raw_s = load_robust_data(stok_file, ['QR KOD', 'KALAN DOZ', 'TOPLAM DOZ', 'BIRIM ADI', 'BIRIM TIPI'])
         
+        # GÜVENLİK DUVARI: Herhangi bir Excel okunamadıysa çökme, durdur.
+        if df_raw_b.empty or df_raw_t.empty or df_raw_s.empty:
+            st.warning("Eksik kütüphane veya hatalı format sebebiyle veri okunamadı. Lütfen yukarıdaki hataları kontrol ediniz.")
+            st.stop()
+        
+        df_raw_b.columns = [str(c).strip().upper().replace('İ', 'I') for c in df_raw_b.columns]
+        df_raw_t.columns = [str(c).strip() for c in df_raw_t.columns]
+        df_raw_s.columns = [str(c).strip() for c in df_raw_s.columns]
+
+        # 2. MASTER HAZIRLIĞI
         rename_b = {}
         for col in df_raw_b.columns:
             if col == 'BIRIM ADI': rename_b[col] = 'BIRIM'
@@ -223,14 +230,6 @@ if tuketim_file and stok_file and birim_file:
         if 'UST_BIRIM_MASTER' in df_raw_b.columns: req_cols.append('UST_BIRIM_MASTER')
         
         birim_master = df_raw_b[req_cols].drop_duplicates(subset=['BIRIM']).copy()
-        
-        # 2. TÜKETİM VE STOK VERİLERİNİ YÜKLE
-        # Tüketim raporu için yeni ve eski format başlıklarını destekleyen kelimeler eklendi
-        df_raw_t = load_robust_data(tuketim_file, ['UYGULANAN', 'URUN', 'ÜRÜN'])
-        df_raw_s = load_robust_data(stok_file, ['QR KOD', 'KALAN DOZ', 'TOPLAM DOZ', 'BIRIM ADI', 'BIRIM TIPI'])
-        
-        df_raw_t.columns = [str(c).strip() for c in df_raw_t.columns]
-        df_raw_s.columns = [str(c).strip() for c in df_raw_s.columns]
 
         # --- SÜTUN ONARIMI ---
         def smart_fix_columns(df):
@@ -250,7 +249,6 @@ if tuketim_file and stok_file and birim_file:
 
         df_raw_t = smart_fix_columns(df_raw_t)
         
-        # Özet/Toplam satırlarını filtrele ("İL TOPLAMI" ve "-")
         if 'ILÇE' in df_raw_t.columns:
             df_raw_t = df_raw_t[~df_raw_t['ILÇE'].astype(str).str.upper().str.contains('TOPLAM', na=False)]
         if 'BIRIM' in df_raw_t.columns:
@@ -279,21 +277,18 @@ if tuketim_file and stok_file and birim_file:
             if 'BIRIM ADI' in df_raw_s.columns: df_raw_s.rename(columns={'BIRIM ADI': 'BIRIM'}, inplace=True)
 
         # 3. VERİLERİ BİRİMLER LİSTESİ (MASTER) İLE SABİTLEME
-        # Tüketim verisine İlçe ve Birim Tipini bas
         if 'ILÇE' in df_raw_t.columns: df_raw_t.drop(columns=['ILÇE'], inplace=True)
         if 'BIRIM TIPI' in df_raw_t.columns: df_raw_t.drop(columns=['BIRIM TIPI'], inplace=True)
         df_raw_t = pd.merge(df_raw_t, birim_master, on='BIRIM', how='left')
         if 'ILÇE_MASTER' in df_raw_t.columns: df_raw_t.rename(columns={'ILÇE_MASTER': 'ILÇE'}, inplace=True)
         if 'TIP_MASTER' in df_raw_t.columns: df_raw_t.rename(columns={'TIP_MASTER': 'BIRIM TIPI'}, inplace=True)
         
-        # Stok verisine İlçe ve Birim Tipini bas
         if 'ILÇE' in df_raw_s.columns: df_raw_s.drop(columns=['ILÇE'], inplace=True)
         if 'BIRIM TIPI' in df_raw_s.columns: df_raw_s.drop(columns=['BIRIM TIPI'], inplace=True)
         df_raw_s = pd.merge(df_raw_s, birim_master, on='BIRIM', how='left')
         if 'ILÇE_MASTER' in df_raw_s.columns: df_raw_s.rename(columns={'ILÇE_MASTER': 'ILÇE'}, inplace=True)
         if 'TIP_MASTER' in df_raw_s.columns: df_raw_s.rename(columns={'TIP_MASTER': 'BIRIM TIPI'}, inplace=True)
 
-        # Boşlukları doldur
         df_raw_t['ILÇE'] = df_raw_t['ILÇE'].fillna('BİLİNMİYOR')
         df_raw_s['ILÇE'] = df_raw_s['ILÇE'].fillna('BİLİNMİYOR')
         
@@ -321,7 +316,6 @@ if tuketim_file and stok_file and birim_file:
         
         res_df = pd.merge(df_c, df_s_grp, on=['Ilce', 'Birim', 'Urun'], how='outer').fillna(0)
         
-        # Son tabloya Ana Tip ve Üst Birim bilgilerini kalıcı ekle
         bm_reduced = birim_master.rename(columns={'TIP_MASTER': 'Tip', 'UST_BIRIM_MASTER': 'Ust_Birim'})
         cols_to_merge = ['BIRIM']
         if 'Tip' in bm_reduced.columns: cols_to_merge.append('Tip')
@@ -347,11 +341,9 @@ if tuketim_file and stok_file and birim_file:
 
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         
-        # --- ANOMALİ (HATALI VERİ) DEDEKTÖRÜ MANTIĞI ---
         def anomali_tespit(row):
             hiz = row['Gunluk_Hiz']
             tip = str(row['Tip']).upper()
-            
             if 'ASM' in tip and hiz > 30: return True
             elif 'TSM' in tip and hiz > 150: return True
             elif 'SON KULLANICI' in tip and hiz > 150: return True
@@ -360,7 +352,6 @@ if tuketim_file and stok_file and birim_file:
 
         res_df['Veri_Anomalisi'] = res_df.apply(anomali_tespit, axis=1)
 
-        # --- İHTİYAÇ VE YUVARLAMA ---
         res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(ozellestirilmis_yuvarlama)
         
@@ -378,7 +369,6 @@ if tuketim_file and stok_file and birim_file:
 
         res_df[['Durum', 'Fazla_Miktar']] = res_df.apply(get_durum_ve_fazla, axis=1)
 
-        # --- FİLTRELER ---
         st.sidebar.markdown("---")
         st.sidebar.markdown("**🔍 Veri Filtreleme**")
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
@@ -388,7 +378,6 @@ if tuketim_file and stok_file and birim_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
         
-        # --- İL GENELİ VERİSİ HAZIRLIĞI ---
         grp_tuketim_saha = df_t_saha.groupby('ÜRÜN TANIMI')['Tuketim'].sum()
         grp_stok_saha = df_s_saha.groupby('ÜRÜN TANIMI')['Stok'].sum()
         grp_stok_ism = df_s_ism.groupby('ÜRÜN TANIMI')['Stok'].sum()
@@ -421,7 +410,6 @@ if tuketim_file and stok_file and birim_file:
         
         st.markdown("---")
 
-        # --- SEKMELER ---
         tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
             "📊 İl Geneli",
             "📍 İlçe Bazlı Özet",
@@ -431,7 +419,6 @@ if tuketim_file and stok_file and birim_file:
             "📉 Zayi ve Verimlilik"
         ])
 
-        # TAB 1: İL GENELİ
         with tab1:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
             
@@ -459,12 +446,10 @@ if tuketim_file and stok_file and birim_file:
                 elif val < 60: return 'background-color: #ffe066; color: black'
                 else: return 'background-color: #90ee90; color: black'
 
-            # --- PANDAS SÜRÜM UYUMSUZLUĞU İÇİN GÜVENLİ STİL UYGULAMASI ---
             try:
                 styled_df = df_genel.style.map(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)', 'İl Ana Depo Yetme Süresi (Gün)'])
             except AttributeError:
                 styled_df = df_genel.style.applymap(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)', 'İl Ana Depo Yetme Süresi (Gün)'])
-            # -----------------------------------------------------------
             
             styled_df = styled_df.format({"Günlük ortalama tüketim": "{:.2f}", "Yetme Süresi (Gün)": "{:.1f}", "İl Ana Depo Yetme Süresi (Gün)": "{:.1f}", "İl Geneli Stok": "{:.0f}", "İl Ana Depo (ISM)": "{:.0f}", "Saha (TSM, ASM, Son)": "{:.0f}", "Toplam Tüketim": "{:.0f}"})
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
@@ -472,11 +457,9 @@ if tuketim_file and stok_file and birim_file:
             with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
             with c8: st.download_button("📥 İl Geneli PDF", to_pdf(df_genel, "Il Geneli Stok ve Tuketim"), "il_geneli_ozet.pdf")
 
-        # TAB 2: İLÇE BAZLI
         with tab2:
             df_i = df_f.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Stok': 'sum'}).reset_index()
             df_i['Ihtiyac'] = (((df_i['Tuketim'] / oto_gun_sayisi) * plan_suresi) * (1 + guvenlik_marji)) - df_i['Stok']
-            
             df_i['Gonderilecek'] = df_i['Ihtiyac'].apply(ozellestirilmis_yuvarlama)
 
             f2_visible = df_i[df_i['Gonderilecek'] > 0].copy().sort_values(['Ilce', 'Gonderilecek'], ascending=[True, False])
@@ -492,16 +475,13 @@ if tuketim_file and stok_file and birim_file:
             with c5: st.download_button("📥 İlçe Excel", to_excel(f2_display), "ilce_ozet.xlsx")
             with c6: st.download_button("📥 İlçe PDF", to_pdf(f2_display, "Ilce Ozet"), "ilce_ozet.pdf")
 
-        # TAB 3: SEVKİYAT PLANI
         with tab3:
-            
             df_anomali = df_f[(df_f['Veri_Anomalisi'] == True) & (df_f['Gonderilecek'] > 0)].copy()
             
             if not df_anomali.empty:
                 st.error("🚨 **DİKKAT: Olası Hatalı Veri Girişi Tespit Edildi!**")
                 st.markdown("""
-                Aşağıdaki birimlerin **günlük aşı tüketim hızları**, bulundukları kurum tipinin (ASM vb.) rutin ortalamalarına göre **şüpheli derecede yüksektir.** Sahadaki personeller sisteme hatalı veri girmiş olabilir. 
-                *Yanlışlıkla çok yüksek miktarda aşı sevkiyatı yapmamak için, bu kurumlara gönderim yapmadan önce **telefonla arayarak teyit etmeniz** önerilir.*
+                Aşağıdaki birimlerin **günlük aşı tüketim hızları**, bulundukları kurum tipinin (ASM vb.) rutin ortalamalarına göre **şüpheli derecede yüksektir.**
                 """)
                 st.dataframe(df_anomali[['Ilce', 'Ust_Birim', 'Birim', 'Urun', 'Tip', 'Gunluk_Hiz', 'Tuketim', 'Gonderilecek']].style.format({'Gunluk_Hiz': '{:.1f}'}), use_container_width=True)
                 st.markdown("---")
@@ -517,7 +497,6 @@ if tuketim_file and stok_file and birim_file:
             with c1: st.download_button("📥 Sevkiyat Excel", to_excel(f1_sevk), "sevkiyat_plani.xlsx")
             with c2: st.download_button("📥 Sevkiyat PDF", to_pdf(f1_sevk, "Sevkiyat Plani"), "sevkiyat_plani.pdf")
 
-        # TAB 4: FAZLA VE ÖLÜ STOK
         with tab4:
             st.caption(f"Aşağıdaki liste, {asiri_esik} günden fazla stoğu bulunan ve 'Aşırı' olarak işaretlenen **ASM ve Son Kullanıcı** birimlerini içerir.")
             f1_asiri = df_f[df_f['Durum'] == "⚠️ AŞIRI"].copy().sort_values('Yetme_Suresi', ascending=False)
@@ -534,9 +513,7 @@ if tuketim_file and stok_file and birim_file:
                 c_olu1, c_olu2 = st.columns(2)
                 with c_olu1: st.download_button("📥 Ölü Stok Excel", to_excel(f1_olu), "olu_stok.xlsx")
                 with c_olu2: st.download_button("📥 Ölü Stok PDF", to_pdf(f1_olu, "Olu Stok"), "olu_stok.pdf")
-            else: st.success("Tebrikler! Ölü stok (hareketsiz ürün) bulunamadı.")
 
-        # TAB 5: AKILLI TRANSFER
         with tab5:
             st.subheader("🔄 Akıllı Transfer Önerileri (İlçe İçi)")
             transfer_oncelik = st.radio(
@@ -544,7 +521,6 @@ if tuketim_file and stok_file and birim_file:
                 ["Tümü (Genel)", "Sadece ASM'ler (Aile Sağlığı Merkezleri)", "Sadece Son Kullanıcı Birimleri"],
                 horizontal=True
             )
-            st.markdown("Bu modül, aynı ilçe içinde **fazla stoğu olan** birimlerle **aşı ihtiyacı olan** birimleri eşleştirir.")
             
             transfer_onerileri = []
             for ilce in df_f['Ilce'].unique():
@@ -589,7 +565,6 @@ if tuketim_file and stok_file and birim_file:
             else:
                 st.info(f"Seçilen kriterlere göre ({transfer_oncelik}, En az 10 doz) transfer fırsatı bulunamadı.")
 
-        # TAB 6: ZAYİ VE VERİMLİLİK
         with tab6:
             st.subheader("📉 Zayi ve Verimlilik Analizi")
             analiz_turu = st.radio("Analiz Türü Seçin:", ("Tüm Aşılar (Genel Görünüm)", "Sadece Tekli Doz Aşılar (Kritik Analiz)"), horizontal=True)
