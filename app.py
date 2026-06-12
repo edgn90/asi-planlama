@@ -250,7 +250,7 @@ if tuketim_file and stok_file and birim_file:
 
         df_raw_t = smart_fix_columns(df_raw_t)
         
-        # YENİ EKLENEN: Özet/Toplam satırlarını filtrele ("İL TOPLAMI" ve "-")
+        # Özet/Toplam satırlarını filtrele ("İL TOPLAMI" ve "-")
         if 'ILÇE' in df_raw_t.columns:
             df_raw_t = df_raw_t[~df_raw_t['ILÇE'].astype(str).str.upper().str.contains('TOPLAM', na=False)]
         if 'BIRIM' in df_raw_t.columns:
@@ -459,7 +459,13 @@ if tuketim_file and stok_file and birim_file:
                 elif val < 60: return 'background-color: #ffe066; color: black'
                 else: return 'background-color: #90ee90; color: black'
 
-            styled_df = df_genel.style.map(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)', 'İl Ana Depo Yetme Süresi (Gün)'])
+            # --- PANDAS SÜRÜM UYUMSUZLUĞU İÇİN GÜVENLİ STİL UYGULAMASI ---
+            try:
+                styled_df = df_genel.style.map(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)', 'İl Ana Depo Yetme Süresi (Gün)'])
+            except AttributeError:
+                styled_df = df_genel.style.applymap(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)', 'İl Ana Depo Yetme Süresi (Gün)'])
+            # -----------------------------------------------------------
+            
             styled_df = styled_df.format({"Günlük ortalama tüketim": "{:.2f}", "Yetme Süresi (Gün)": "{:.1f}", "İl Ana Depo Yetme Süresi (Gün)": "{:.1f}", "İl Geneli Stok": "{:.0f}", "İl Ana Depo (ISM)": "{:.0f}", "Saha (TSM, ASM, Son)": "{:.0f}", "Toplam Tüketim": "{:.0f}"})
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
             c7, c8 = st.columns(2)
