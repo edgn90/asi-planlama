@@ -30,10 +30,11 @@ def clean_number(x):
     except:
         return 0
 
-# YÜKLEDİĞİNİZ LİSTEYE GÖRE SABİTLENMİŞ AŞI SÖZLÜĞÜ (OTOMATİK ÇEVİRMEN)
+# YÜKLEDİĞİNİZ LİSTEYE GÖRE GÜNCELLENMİŞ AŞI SÖZLÜĞÜ (OTOMATİK ÇEVİRMEN)
 def standardize_urun_adi(urun):
     if not isinstance(urun, str): return str(urun)
     
+    # İsimleri karşılaştırmaya hazırlamak için standartlaştır
     u = urun.upper().replace('İ', 'I').replace('Ç', 'C').replace('Ş', 'S').replace('Ö', 'O').replace('Ü', 'U').replace('Ğ', 'G').strip()
     u = re.sub(r'\s+', ' ', u)
     
@@ -55,7 +56,7 @@ def standardize_urun_adi(urun):
         "PPD TUBERCULIN MAMMALIAN": "PPD Solüsyonu",
         "HEPATITIS B VACCINE (RDNA)": "Hepatit B (Pediatrik) Aşısı",
         "VAXIGRIP 0,5 ML": "Mevsimsel İnfluenza Aşısı (Grip Aşısı)",
-        "ALBIES KUDUZ ANTISERUMU": "Kuduz Aşısı",
+        "ALBIES KUDUZ ANTISERUMU": "İnsan Kaynaklı Kuduz Antiserumu", # GÜNCEL DOSYAYA GÖRE DEĞİŞTİRİLDİ
         "RABIES VACCINE INACTIVATED": "Kuduz Aşısı",
         "DIFTET DT PEDIATRI ASISI": "DT Pediatrik (Pediatrik Tip Tetanoz Difteri) Aşısı",
         "MENQUADFI 0,5 ML IM": "Konjuge Menenjit (ACWY) Aşısı",
@@ -311,7 +312,6 @@ if tuketim_file and stok_file and birim_file:
         df_t = df_t[~df_t['BIRIM'].astype(str).str.upper().str.contains('TOPLAM', na=False)]
         df_t = df_t[df_t['BIRIM'] != '-']
 
-        # DİKKAT: .astype(str) KALDIRILDI! Sayılar artık nokta hatasına kurban gitmeyecek.
         df_s['STOK'] = pd.to_numeric(df_s['STOK'].apply(clean_number), errors='coerce').fillna(0)
         df_s = df_s.groupby(['BIRIM', 'URUN'], as_index=False)['STOK'].sum()
 
