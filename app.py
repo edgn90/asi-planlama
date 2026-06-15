@@ -17,6 +17,45 @@ def clean_number(x):
     if isinstance(x, (int, float)): return x
     return str(x).replace('.', '').replace(',', '').replace('"', '').strip()
 
+# AŞI MARKA -> STANDART TANIM ÇEVİRMENİ (YENİ EKLENDİ)
+def standardize_urun_adi(urun):
+    if not isinstance(urun, str): return str(urun)
+    u = urun.upper().replace('İ', 'I').replace('Ç', 'C').replace('Ş', 'S').replace('Ö', 'O').replace('Ü', 'U').replace('Ğ', 'G')
+    
+    # Görseldeki eşleşmelere göre kurallar
+    if 'TETRAXIM' in u or '4 BILESENLI' in u or 'DABT-IPA' in u: 
+        return '4 Bileşenli Karma (DaBT-İPA) Aşı'
+    if 'HEXAXIM' in u or '6 BILESENLI' in u or 'HIB-HEP B' in u: 
+        return '6 Bileşenli Karma (DaBT-İPA-Hib-Hep B) Aşı'
+    if 'BCG' in u: 
+        return 'BCG Aşısı'
+    if 'DIFTERI ANTISERUMU' in u: 
+        return 'Difteri Antiserumu'
+    if 'TETANOS ANTISERUM' in u or 'TETANOZ ANTISERUM' in u: 
+        return 'Tetanos Antiserumu'
+    if 'HAVRIX' in u or 'HEPATIT A' in u: 
+        return 'Hepatit A (Pediatrik) Aşısı'
+    if 'EUVAX' in u or 'HEPATIT B' in u: 
+        return 'Hepatit B (Pediatrik) Aşısı'
+    if 'M-M-R' in u or 'KKK' in u or 'KIZAMIK' in u: 
+        return 'KKK (Kızamık Kızamıkçık Kabakulak) Aşısı'
+    if 'PREVENAR' in u or 'KPA' in u or 'PNOMOKOK' in u: 
+        return 'KPA 13 VALANLI (Konjuge Pnömokok 13 Valanlı) Aşısı'
+    if 'KUDUZ' in u or 'VERORAB' in u or 'ABHAYRAB' in u: 
+        return 'Kuduz Aşısı'
+    if 'POLIO' in u or 'SABIN' in u: 
+        return 'Oral Polio Aşısı (İki Bileşenli)'
+    if 'VARILRIX' in u or 'SUCICEGI' in u: 
+        return 'Suçiçeği Aşısı'
+    if 'TETAVAX' in u or 'TD ADULT' in u or 'ERISKIN TIP TETANOZ' in u: 
+        return 'TD Adult (Erişkin Tip Tetanoz Difteri) Aşısı'
+    if 'BOOSTRIX' in u or 'TDAB' in u or 'ASELULER BOGMACA' in u: 
+        return 'Tdab (TETANOZ - Difteri - ASELÜLER BOĞMACA)'
+    if 'PPD' in u or 'TUBERKULIN' in u:
+        return 'PPD (Tüberkülin) Solüsyonu'
+        
+    return urun.strip()
+
 def get_dates_from_file(file_obj):
     file_ext = file_obj.name.split('.')[-1].lower()
     start_date, end_date = None, None
@@ -104,16 +143,13 @@ def ozellestirilmis_yuvarlama(val):
     elif val < 500: return math_round(val / 50) * 50
     else: return math_round(val / 100) * 100
 
-# --- KATI SÜTUN STANDARTLAŞTIRMA (AMBIGUOUS HATASI ÇÖZÜMÜ) ---
 def standardize_cols(df, source_type):
     rename_map = {}
     for c in df.columns:
-        # Türkçe karakterleri tamamen standartlaştır
         cu = str(c).strip().upper()
         rep = {"İ":"I", "Ç":"C", "Ü":"U", "Ş":"S", "Ö":"O", "Ğ":"G"}
         for k, v in rep.items(): cu = cu.replace(k, v)
         
-        # Tam eşleşme (Exact Match) kuralları
         if source_type == 'master':
             if cu in ['BIRIM ADI', 'BIRIM']: rename_map[c] = 'BIRIM'
             elif cu in ['BIRIM TIPI']: rename_map[c] = 'TIP_MASTER'
@@ -128,13 +164,12 @@ def standardize_cols(df, source_type):
             elif cu in ['ILCE']: rename_map[c] = 'ILCE_TEMP'
             
         elif source_type == 'stok':
-            if cu in ['BIRIM']: rename_map[c] = 'BIRIM' # Stok Birimi, Stok Birimi Tipi engelleniyor.
+            if cu in ['BIRIM']: rename_map[c] = 'BIRIM'
             elif cu in ['URUN', 'URUN TANIMI']: rename_map[c] = 'URUN'
             elif cu in ['KALAN DOZ', 'KALAN']: rename_map[c] = 'STOK'
             elif cu in ['ILCE']: rename_map[c] = 'ILCE_TEMP'
 
     df.rename(columns=rename_map, inplace=True)
-    # Çift sütunları silerek Series uyuşmazlıklarını kesin olarak engelle
     df = df.loc[:, ~df.columns.duplicated()] 
     return df
 
@@ -239,17 +274,21 @@ if tuketim_file and stok_file and birim_file:
             st.stop()
 
         if 'BIRIM' not in df_b.columns: 
-            st.error(f"Master listede 'Birim' sütunu bulunamadı. Lütfen kontrol edin.\n\nBulunan Sütunlar: {list(df_b.columns)}")
+            st.error(f"Master listede 'Birim' sütunu bulunamadı.\nBulunanlar: {list(df_b.columns)}")
             st.stop()
         if 'BIRIM' not in df_t.columns or 'URUN' not in df_t.columns or 'TUKETIM' not in df_t.columns: 
-            st.error(f"Tüketim listesinde sütun eksik.\n\nBulunan Sütunlar: {list(df_t.columns)}")
+            st.error(f"Tüketim listesinde sütun eksik.\nBulunanlar: {list(df_t.columns)}")
             st.stop()
         if 'BIRIM' not in df_s.columns or 'URUN' not in df_s.columns or 'STOK' not in df_s.columns: 
-            st.error(f"Stok listesinde sütun eksik.\n\nBulunan Sütunlar: {list(df_s.columns)}")
+            st.error(f"Stok listesinde sütun eksik.\nBulunanlar: {list(df_s.columns)}")
             st.stop()
 
         zayi_var_mi = 'ZAYI' in df_t.columns
         birim_master = df_b.drop_duplicates(subset=['BIRIM']).copy()
+
+        # AŞILARI STANDART İSME ÇEVİR
+        df_t['URUN'] = df_t['URUN'].apply(standardize_urun_adi)
+        df_s['URUN'] = df_s['URUN'].apply(standardize_urun_adi)
 
         # Bozuk Satırları Temizle
         df_t = df_t[~df_t['BIRIM'].astype(str).str.upper().str.contains('TOPLAM', na=False)]
