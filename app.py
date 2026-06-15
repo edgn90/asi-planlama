@@ -11,17 +11,29 @@ import re
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
 st.title("💉 Akıllı Aşı Talep Tahmini ve Stok Yönetim Paneli")
 
-# --- YARDIMCI FONKSİYONLAR ---
+# --- YARDIMCI FONKSİYONLAR (GÜÇLENDİRİLMİŞ SAYI TEMİZLEYİCİ) ---
 def clean_number(x):
     if pd.isnull(x): return 0
-    if isinstance(x, (int, float)): return x
-    return str(x).replace('.', '').replace(',', '').replace('"', '').strip()
+    if isinstance(x, (int, float)): return float(x)
+    
+    x = str(x).strip()
+    if x == '-' or x == '': return 0
+    
+    # Pandas'ın otomatik eklediği ".0" ondalığını güvenlice temizle (10 kat hatasının çözümü)
+    if x.endswith('.0'):
+        x = x[:-2]
+        
+    # Binlik ayraçları temizle
+    x = x.replace('.', '').replace(',', '').replace('"', '')
+    try:
+        return float(x)
+    except:
+        return 0
 
 # YÜKLEDİĞİNİZ LİSTEYE GÖRE SABİTLENMİŞ AŞI SÖZLÜĞÜ (OTOMATİK ÇEVİRMEN)
 def standardize_urun_adi(urun):
     if not isinstance(urun, str): return str(urun)
     
-    # İsimleri karşılaştırmaya hazırlamak için standartlaştır
     u = urun.upper().replace('İ', 'I').replace('Ç', 'C').replace('Ş', 'S').replace('Ö', 'O').replace('Ü', 'U').replace('Ğ', 'G').strip()
     u = re.sub(r'\s+', ' ', u)
     
@@ -299,11 +311,12 @@ if tuketim_file and stok_file and birim_file:
         df_t = df_t[~df_t['BIRIM'].astype(str).str.upper().str.contains('TOPLAM', na=False)]
         df_t = df_t[df_t['BIRIM'] != '-']
 
-        df_s['STOK'] = pd.to_numeric(df_s['STOK'].astype(str).apply(clean_number), errors='coerce').fillna(0)
+        # DİKKAT: .astype(str) KALDIRILDI! Sayılar artık nokta hatasına kurban gitmeyecek.
+        df_s['STOK'] = pd.to_numeric(df_s['STOK'].apply(clean_number), errors='coerce').fillna(0)
         df_s = df_s.groupby(['BIRIM', 'URUN'], as_index=False)['STOK'].sum()
 
-        df_t['TUKETIM'] = pd.to_numeric(df_t['TUKETIM'].astype(str).apply(clean_number), errors='coerce').fillna(0)
-        df_t['ZAYI'] = pd.to_numeric(df_t['ZAYI'].astype(str).apply(clean_number), errors='coerce').fillna(0) if zayi_var_mi else 0
+        df_t['TUKETIM'] = pd.to_numeric(df_t['TUKETIM'].apply(clean_number), errors='coerce').fillna(0)
+        df_t['ZAYI'] = pd.to_numeric(df_t['ZAYI'].apply(clean_number), errors='coerce').fillna(0) if zayi_var_mi else 0
 
         df_c = df_t.groupby(['BIRIM', 'URUN']).agg({'TUKETIM': 'sum', 'ZAYI': 'sum'}).reset_index()
         res_df = pd.merge(df_c, df_s, on=['BIRIM', 'URUN'], how='outer').fillna(0)
@@ -332,19 +345,15 @@ if tuketim_file and stok_file and birim_file:
         if 'Ust_Birim' not in res_df.columns: res_df['Ust_Birim'] = '-'
         res_df['Ust_Birim'] = res_df['Ust_Birim'].fillna('-')
 
-        # İSTANBUL İSM -> İL ANA DEPO KURALI EKLENDİ
         def infer_tip(row):
             name_upper = str(row['Birim']).upper().replace('İ', 'I')
             
-            # Öncelikle "İSTANBUL İSM" veya türevi geçiyorsa kesinlikle İl Ana Depo diyelim
             if 'ISTANBUL ISM' in name_upper or 'IL ANA DEPO' in name_upper:
                 return 'İL ANA DEPO'
                 
-            # Eğer Master Data'da tipi belli ve doluysa onu kullan
             if 'Tip' in res_df.columns and pd.notna(row.get('Tip')) and str(row.get('Tip')).strip() != '':
                 return row['Tip']
                 
-            # Aksi halde isminden tahmin et
             if 'ASM' in name_upper or 'AILE SAGLIGI' in name_upper: return 'ASM'
             if 'TSM' in name_upper or 'TOPLUM SAGLIGI' in name_upper: return 'TSM'
             if 'ISM' in name_upper: return 'İL ANA DEPO'
@@ -390,7 +399,6 @@ if tuketim_file and stok_file and birim_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # İL ANA DEPO ve SAHA AYRIMI (Güncellendi)
         df_saha = df_f[~df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO|ISM|İSM', regex=True, na=False)]
         df_ism = df_f[df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO|ISM|İSM', regex=True, na=False)]
 
@@ -517,7 +525,6 @@ if tuketim_file and stok_file and birim_file:
             transfer_onerileri = []
             for ilce in df_f['Ilce'].unique():
                 df_ilce = df_f[df_f['Ilce'] == ilce]
-                # Ana depoları transfer algoritmasından çıkar
                 df_ilce_transfer = df_ilce[~df_ilce['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['IL ANA DEPO', 'İL ANA DEPO', 'ISM', 'TSM', 'DEPO']))].copy()
                 
                 for urun in df_ilce_transfer['Urun'].unique():
