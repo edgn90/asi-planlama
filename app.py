@@ -104,39 +104,50 @@ def ozellestirilmis_yuvarlama(val):
     elif val < 500: return math_round(val / 50) * 50
     else: return math_round(val / 100) * 100
 
-# --- VERİ OKUMA VE SÜTUN STANDARTLAŞTIRMA ---
+# --- KATI SÜTUN STANDARTLAŞTIRMA (AMBIGUOUS HATASI ÇÖZÜMÜ) ---
 def standardize_cols(df, source_type):
     rename_map = {}
     for c in df.columns:
-        cu = str(c).strip().upper().replace('İ', 'I')
+        # Türkçe karakterleri tamamen standartlaştır
+        cu = str(c).strip().upper()
+        rep = {"İ":"I", "Ç":"C", "Ü":"U", "Ş":"S", "Ö":"O", "Ğ":"G"}
+        for k, v in rep.items(): cu = cu.replace(k, v)
+        
+        # Tam eşleşme (Exact Match) kuralları
         if source_type == 'master':
-            if cu == 'BIRIM' or cu == 'BİRİM' or ('BIRIM' in cu and 'ADI' in cu): rename_map[c] = 'BIRIM'
-            elif 'TIP' in cu and 'BIRIM' in cu: rename_map[c] = 'TIP_MASTER'
-            elif 'ILÇE' in cu or 'ILCE' in cu: rename_map[c] = 'ILCE_MASTER'
-            elif 'UST' in cu and 'BIRIM' in cu: rename_map[c] = 'UST_BIRIM_MASTER'
+            if cu in ['BIRIM ADI', 'BIRIM']: rename_map[c] = 'BIRIM'
+            elif cu in ['BIRIM TIPI']: rename_map[c] = 'TIP_MASTER'
+            elif cu in ['ILCE']: rename_map[c] = 'ILCE_MASTER'
+            elif cu in ['UST BIRIM']: rename_map[c] = 'UST_BIRIM_MASTER'
+            
         elif source_type == 'tuketim':
-            if cu == 'BİRİM' or cu == 'BIRIM': rename_map[c] = 'BIRIM'
-            elif 'URUN' in cu or 'ÜRÜN' in cu or 'TANIM' in cu: rename_map[c] = 'URUN'
-            elif 'UYGULANAN' in cu: rename_map[c] = 'TUKETIM'
-            elif 'ZAYI' in cu: rename_map[c] = 'ZAYI'
-            elif 'ILÇE' in cu or 'ILCE' in cu: rename_map[c] = 'ILCE_TEMP'
+            if cu in ['BIRIM']: rename_map[c] = 'BIRIM'
+            elif cu in ['URUN TANIMI', 'URUN']: rename_map[c] = 'URUN'
+            elif cu in ['UYGULANAN DOZ', 'UYGULANAN']: rename_map[c] = 'TUKETIM'
+            elif cu in ['ZAYI', 'ZAYI DOZ']: rename_map[c] = 'ZAYI'
+            elif cu in ['ILCE']: rename_map[c] = 'ILCE_TEMP'
+            
         elif source_type == 'stok':
-            if cu == 'BİRİM' or cu == 'BIRIM' or ('BIRIM' in cu and 'ADI' in cu): rename_map[c] = 'BIRIM'
-            elif 'URUN' in cu or 'ÜRÜN' in cu or 'TANIM' in cu: rename_map[c] = 'URUN'
-            elif 'KALAN' in cu and 'DOZ' in cu: rename_map[c] = 'STOK'
-            elif 'TOPLAM' in cu and 'DOZ' in cu and 'STOK' not in rename_map.values(): rename_map[c] = 'STOK'
-            elif 'ILÇE' in cu or 'ILCE' in cu: rename_map[c] = 'ILCE_TEMP'
+            if cu in ['BIRIM']: rename_map[c] = 'BIRIM' # Stok Birimi, Stok Birimi Tipi engelleniyor.
+            elif cu in ['URUN', 'URUN TANIMI']: rename_map[c] = 'URUN'
+            elif cu in ['KALAN DOZ', 'KALAN']: rename_map[c] = 'STOK'
+            elif cu in ['ILCE']: rename_map[c] = 'ILCE_TEMP'
+
     df.rename(columns=rename_map, inplace=True)
+    # Çift sütunları silerek Series uyuşmazlıklarını kesin olarak engelle
+    df = df.loc[:, ~df.columns.duplicated()] 
     return df
 
 def load_robust_data(file_obj, source_type):
     ext = file_obj.name.split('.')[-1].lower()
     df = pd.DataFrame()
     
-    # AKILLI BAŞLIK DEDEKTÖRÜ: Özet satırlarını atlayıp gerçek tablo başlığını bulur
     def find_header(lines):
         for i, line_raw in enumerate(lines):
-            line = str(line_raw).upper().replace('İ', 'I')
+            line = str(line_raw).upper()
+            rep = {"İ":"I", "Ç":"C", "Ü":"U", "Ş":"S", "Ö":"O", "Ğ":"G"}
+            for k, v in rep.items(): line = line.replace(k, v)
+            
             if source_type == 'tuketim':
                 if 'BIRIM' in line and 'UYGULANAN' in line: return i
             elif source_type == 'stok':
@@ -219,7 +230,6 @@ if tuketim_file and stok_file and birim_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_file(tuketim_file)
         
-        # 1. VERİLERİ YÜKLE
         df_b = load_robust_data(birim_file, 'master')
         df_t = load_robust_data(tuketim_file, 'tuketim')
         df_s = load_robust_data(stok_file, 'stok')
@@ -228,42 +238,32 @@ if tuketim_file and stok_file and birim_file:
             st.warning("Dosyalar boş veya beklenen formatta okunamadı.")
             st.stop()
 
-        # Eksik Sütun Kontrolü (Zayi Sütunu Artık İsteğe Bağlı!)
         if 'BIRIM' not in df_b.columns: 
             st.error(f"Master listede 'Birim' sütunu bulunamadı. Lütfen kontrol edin.\n\nBulunan Sütunlar: {list(df_b.columns)}")
             st.stop()
         if 'BIRIM' not in df_t.columns or 'URUN' not in df_t.columns or 'TUKETIM' not in df_t.columns: 
-            st.error(f"Tüketim listesinde sütun eksik. (Birim, Ürün veya Uygulanan Doz bulunamadı)\n\nBulunan Sütunlar: {list(df_t.columns)}")
+            st.error(f"Tüketim listesinde sütun eksik.\n\nBulunan Sütunlar: {list(df_t.columns)}")
             st.stop()
         if 'BIRIM' not in df_s.columns or 'URUN' not in df_s.columns or 'STOK' not in df_s.columns: 
-            st.error(f"Stok listesinde sütun eksik. (Birim, Ürün veya Kalan Doz bulunamadı)\n\nBulunan Sütunlar: {list(df_s.columns)}")
+            st.error(f"Stok listesinde sütun eksik.\n\nBulunan Sütunlar: {list(df_s.columns)}")
             st.stop()
 
-        # Zayi Sütunu Var mı Kontrolü (Uyarı İçin)
         zayi_var_mi = 'ZAYI' in df_t.columns
-
-        # Master Çoğaltmaları Temizle
         birim_master = df_b.drop_duplicates(subset=['BIRIM']).copy()
 
-        # Tüketim Temizliği (Özet/Toplam Satırlarını at)
+        # Bozuk Satırları Temizle
         df_t = df_t[~df_t['BIRIM'].astype(str).str.upper().str.contains('TOPLAM', na=False)]
         df_t = df_t[df_t['BIRIM'] != '-']
-        if 'ILCE_TEMP' in df_t.columns: df_t = df_t[~df_t['ILCE_TEMP'].astype(str).str.upper().str.contains('TOPLAM', na=False)]
 
-        # Stok Yeni Format için Gruplama (Barkodlu Liste)
         df_s['STOK'] = pd.to_numeric(df_s['STOK'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         df_s = df_s.groupby(['BIRIM', 'URUN'], as_index=False)['STOK'].sum()
 
-        # Sayısal Dönüşümler
         df_t['TUKETIM'] = pd.to_numeric(df_t['TUKETIM'].astype(str).apply(clean_number), errors='coerce').fillna(0)
         df_t['ZAYI'] = pd.to_numeric(df_t['ZAYI'].astype(str).apply(clean_number), errors='coerce').fillna(0) if zayi_var_mi else 0
 
-        # --- MERGE VE SABİTLEME ---
-        # Tüketim ve Stok verisini birleştir
         df_c = df_t.groupby(['BIRIM', 'URUN']).agg({'TUKETIM': 'sum', 'ZAYI': 'sum'}).reset_index()
         res_df = pd.merge(df_c, df_s, on=['BIRIM', 'URUN'], how='outer').fillna(0)
 
-        # Master Data ile eşleştir
         req_cols = ['BIRIM']
         if 'ILCE_MASTER' in birim_master.columns: req_cols.append('ILCE_MASTER')
         if 'TIP_MASTER' in birim_master.columns: req_cols.append('TIP_MASTER')
@@ -271,7 +271,6 @@ if tuketim_file and stok_file and birim_file:
         
         res_df = pd.merge(res_df, birim_master[req_cols], on='BIRIM', how='left')
 
-        # Sütunları düzenle
         res_df.rename(columns={
             'ILCE_MASTER': 'Ilce',
             'TIP_MASTER': 'Tip',
@@ -283,7 +282,6 @@ if tuketim_file and stok_file and birim_file:
             'STOK': 'Stok'
         }, inplace=True)
 
-        # Eksik Tip ve İlçeleri doldur
         if 'Ilce' not in res_df.columns: res_df['Ilce'] = 'BILINMIYOR'
         res_df['Ilce'] = res_df['Ilce'].fillna('BILINMIYOR')
         
@@ -291,7 +289,7 @@ if tuketim_file and stok_file and birim_file:
         res_df['Ust_Birim'] = res_df['Ust_Birim'].fillna('-')
 
         def infer_tip(row):
-            if 'Tip' in res_df.columns and pd.notnull(row.get('Tip')) and str(row.get('Tip')).strip() != '':
+            if 'Tip' in res_df.columns and pd.notna(row.get('Tip')) and str(row.get('Tip')).strip() != '':
                 return row['Tip']
             name = str(row['Birim']).upper()
             if 'ASM' in name or 'AILE SAGLIGI' in name: return 'ASM'
@@ -301,7 +299,6 @@ if tuketim_file and stok_file and birim_file:
             return 'Bilinmiyor'
         res_df['Tip'] = res_df.apply(infer_tip, axis=1)
 
-        # HESAPLAMALAR
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
         
         def anomali_tespit(row):
@@ -329,7 +326,6 @@ if tuketim_file and stok_file and birim_file:
             return pd.Series([durum, int(fazla_miktar)])
         res_df[['Durum', 'Fazla_Miktar']] = res_df.apply(get_durum_ve_fazla, axis=1)
 
-        # FİLTRELER
         st.sidebar.markdown("---")
         st.sidebar.markdown("**🔍 Veri Filtreleme**")
         sec_ilce = st.sidebar.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
@@ -339,7 +335,6 @@ if tuketim_file and stok_file and birim_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # METRİKLER VE İL GENELİ HAZIRLIĞI
         df_saha = df_f[~df_f['Tip'].astype(str).str.upper().str.contains('ISM', na=False)]
         df_ism = df_f[df_f['Tip'].astype(str).str.upper().str.contains('ISM', na=False)]
 
