@@ -17,43 +17,35 @@ def clean_number(x):
     if isinstance(x, (int, float)): return x
     return str(x).replace('.', '').replace(',', '').replace('"', '').strip()
 
-# AŞI MARKA -> STANDART TANIM ÇEVİRMENİ (YENİ EKLENDİ)
+# AŞI MARKA -> STANDART TANIM ÇEVİRMENİ (YÜKLEDİĞİNİZ LİSTEYE GÖRE GÜNCELLENDİ)
 def standardize_urun_adi(urun):
     if not isinstance(urun, str): return str(urun)
     u = urun.upper().replace('İ', 'I').replace('Ç', 'C').replace('Ş', 'S').replace('Ö', 'O').replace('Ü', 'U').replace('Ğ', 'G')
     
-    # Görseldeki eşleşmelere göre kurallar
-    if 'TETRAXIM' in u or '4 BILESENLI' in u or 'DABT-IPA' in u: 
-        return '4 Bileşenli Karma (DaBT-İPA) Aşı'
-    if 'HEXAXIM' in u or '6 BILESENLI' in u or 'HIB-HEP B' in u: 
-        return '6 Bileşenli Karma (DaBT-İPA-Hib-Hep B) Aşı'
-    if 'BCG' in u: 
-        return 'BCG Aşısı'
-    if 'DIFTERI ANTISERUMU' in u: 
-        return 'Difteri Antiserumu'
-    if 'TETANOS ANTISERUM' in u or 'TETANOZ ANTISERUM' in u: 
-        return 'Tetanos Antiserumu'
-    if 'HAVRIX' in u or 'HEPATIT A' in u: 
-        return 'Hepatit A (Pediatrik) Aşısı'
-    if 'EUVAX' in u or 'HEPATIT B' in u: 
-        return 'Hepatit B (Pediatrik) Aşısı'
-    if 'M-M-R' in u or 'KKK' in u or 'KIZAMIK' in u: 
-        return 'KKK (Kızamık Kızamıkçık Kabakulak) Aşısı'
-    if 'PREVENAR' in u or 'KPA' in u or 'PNOMOKOK' in u: 
-        return 'KPA 13 VALANLI (Konjuge Pnömokok 13 Valanlı) Aşısı'
-    if 'KUDUZ' in u or 'VERORAB' in u or 'ABHAYRAB' in u: 
-        return 'Kuduz Aşısı'
-    if 'POLIO' in u or 'SABIN' in u: 
-        return 'Oral Polio Aşısı (İki Bileşenli)'
-    if 'VARILRIX' in u or 'SUCICEGI' in u: 
-        return 'Suçiçeği Aşısı'
-    if 'TETAVAX' in u or 'TD ADULT' in u or 'ERISKIN TIP TETANOZ' in u: 
-        return 'TD Adult (Erişkin Tip Tetanoz Difteri) Aşısı'
-    if 'BOOSTRIX' in u or 'TDAB' in u or 'ASELULER BOGMACA' in u: 
-        return 'Tdab (TETANOZ - Difteri - ASELÜLER BOĞMACA)'
-    if 'PPD' in u or 'TUBERKULIN' in u:
-        return 'PPD (Tüberkülin) Solüsyonu'
-        
+    # Yüklenen CSV eşleşme kuralları
+    if 'TD - VAC' in u or 'TETADIF' in u or 'TD ADULT' in u: return 'TD Adult (Erişkin Tip Tetanoz Difteri) Aşısı'
+    if 'BIVALAN POLIO' in u or 'OPV' in u: return 'Oral Polio Aşısı (İki Bileşenli)'
+    if 'PREVENAR' in u or 'KPA' in u: return 'KPA 13 VALANLI (Konjuge Pnömokok 13 Valanlı) Aşısı'
+    if 'HEPATIT B' in u or 'ELOVAC' in u or 'HEPATITIS B VACCINE' in u: return 'Hepatit B (Pediatrik) Aşısı'
+    if 'BCG' in u: return 'BCG Aşısı'
+    if 'HEXAXIM' in u or '6 BILESENLI' in u: return '6 Bileşenli Karma (DaBT-İPA-Hib-Hep B) Aşı'
+    if 'MMR' in u or 'KKK' in u: return 'KKK (Kızamık Kızamıkçık Kabakulak ) Aşısı'
+    if 'VARICELLA' in u or 'SUCICEGI' in u: return 'Suçiçeği Aşısı'
+    if 'HEALIVE' in u or 'HAVTEC' in u or 'HEPATIT A' in u: return 'Hepatit A (Pediatrik) Aşısı'
+    if 'TETRAXIM' in u or '4 BILESENLI' in u: return '4 Bileşenli Karma (DaBT-İPA) Aşı'
+    if 'ADACEL' in u or 'TDAB' in u: return 'Tdab (TETANOZ - Difteri - ASELÜLER BOĞMACA)'
+    if 'MENFIVE' in u: return 'KONJUGE MENENGOKOK AŞISI (ACWYX)'
+    if 'ABHAYRAB' in u or 'RABIES VACCINE' in u or 'ALBIES KUDUZ' in u or ('KUDUZ' in u and 'AT KAYNAKLI' not in u): return 'Kuduz Aşısı'
+    if 'PPD' in u or 'TETABULIN' in u: return 'PPD Solüsyonu'
+    if 'VAXIGRIP' in u or 'INFLUENZA' in u: return 'Mevsimsel İnfluenza Aşısı (Grip Aşısı)'
+    if 'DIFTET' in u or 'DT PEDIATRI' in u: return 'DT Pediatrik (Pediatrik Tip Tetanoz Difteri) Aşısı'
+    if 'MENQUADFI' in u or 'NIMENRIX' in u: return 'Konjuge Menenjit (ACWY) Aşısı'
+    if 'HIBERIX' in u or ('HIB' in u and 'DA' not in u): return 'HİB Aşısı'
+    if 'AKREP' in u: return 'Akrep Antiserumu'
+    if 'YILAN' in u: return 'Yılan Antiserumu'
+    if 'AT KAYNAKLI KUDUZ' in u: return 'At Kaynaklı Kuduz Antiserumu'
+    if 'PENTAXIM' in u or '5 BILESENLI' in u: return '5 Bileşenli Karma (DaBT-İPA-Hib) Aşı'
+
     return urun.strip()
 
 def get_dates_from_file(file_obj):
