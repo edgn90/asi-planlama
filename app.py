@@ -35,7 +35,7 @@ def get_dates_from_file(file_obj):
     else:
         file_obj.seek(0)
         try:
-            lines = [file_obj.readline().decode('utf-8') for _ in range(15)]
+            lines = [file_obj.readline().decode('utf-8-sig') for _ in range(15)]
         except:
             file_obj.seek(0)
             lines = [file_obj.readline().decode('iso-8859-9') for _ in range(15)]
@@ -110,7 +110,7 @@ def standardize_cols(df, source_type):
     for c in df.columns:
         cu = str(c).strip().upper().replace('İ', 'I')
         if source_type == 'master':
-            if 'BIRIM' in cu and 'ADI' in cu: rename_map[c] = 'BIRIM'
+            if cu == 'BIRIM' or cu == 'BİRİM' or ('BIRIM' in cu and 'ADI' in cu): rename_map[c] = 'BIRIM'
             elif 'TIP' in cu and 'BIRIM' in cu: rename_map[c] = 'TIP_MASTER'
             elif 'ILÇE' in cu or 'ILCE' in cu: rename_map[c] = 'ILCE_MASTER'
             elif 'UST' in cu and 'BIRIM' in cu: rename_map[c] = 'UST_BIRIM_MASTER'
@@ -129,20 +129,29 @@ def standardize_cols(df, source_type):
     df.rename(columns=rename_map, inplace=True)
     return df
 
-def load_robust_data(file_obj, keywords, source_type):
+def load_robust_data(file_obj, source_type):
     ext = file_obj.name.split('.')[-1].lower()
     df = pd.DataFrame()
     
+    # AKILLI BAŞLIK DEDEKTÖRÜ: Özet satırlarını atlayıp gerçek tablo başlığını bulur
+    def find_header(lines):
+        for i, line_raw in enumerate(lines):
+            line = str(line_raw).upper().replace('İ', 'I')
+            if source_type == 'tuketim':
+                if 'BIRIM' in line and 'UYGULANAN' in line: return i
+            elif source_type == 'stok':
+                if 'BIRIM' in line and ('DOZ' in line or 'QR' in line or 'URUN' in line or 'STOK' in line): return i
+            elif source_type == 'master':
+                if 'BIRIM' in line and ('ADI' in line or 'TIP' in line or 'ILCE' in line): return i
+        return 0
+
     if ext in ['xlsx', 'xls']:
         try:
             file_obj.seek(0)
             df_temp = pd.read_excel(file_obj, header=None, nrows=25)
-            header_idx = 0
-            for i in range(len(df_temp)):
-                row_str = " ".join([str(x).upper().replace('İ', 'I') for x in df_temp.iloc[i].values if pd.notnull(x)])
-                if any(kw in row_str for kw in keywords):
-                    header_idx = i
-                    break
+            lines = [" ".join([str(x) for x in df_temp.iloc[i].values if pd.notnull(x)]) for i in range(len(df_temp))]
+            header_idx = find_header(lines)
+            
             file_obj.seek(0)
             df = pd.read_excel(file_obj, header=header_idx)
         except Exception as e:
@@ -154,16 +163,15 @@ def load_robust_data(file_obj, keywords, source_type):
                 st.stop()
     else:
         file_obj.seek(0)
-        header_idx = 0
-        try:
-            for i in range(25):
-                raw_line = file_obj.readline()
-                try: line = raw_line.decode('utf-8').upper().replace('İ', 'I')
-                except: line = raw_line.decode('iso-8859-9', errors='ignore').upper().replace('İ', 'I')
-                if any(kw in line for kw in keywords):
-                    header_idx = i
-                    break
-        except: pass
+        lines = []
+        for _ in range(25):
+            try: lines.append(file_obj.readline().decode('utf-8-sig'))
+            except: 
+                file_obj.seek(0)
+                lines = [line.decode('iso-8859-9', errors='ignore') for line in file_obj.readlines()[:25]]
+                break
+                
+        header_idx = find_header(lines)
         
         methods = [
             {'encoding': 'utf-8', 'sep': ';'},
@@ -212,18 +220,27 @@ if tuketim_file and stok_file and birim_file:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_file(tuketim_file)
         
         # 1. VERİLERİ YÜKLE
-        df_b = load_robust_data(birim_file, ['BIRIM', 'BİRİM'], 'master')
-        df_t = load_robust_data(tuketim_file, ['UYGULANAN', 'URUN', 'ÜRÜN', 'TANIM'], 'tuketim')
-        df_s = load_robust_data(stok_file, ['QR KOD', 'KALAN', 'TOPLAM', 'BIRIM'], 'stok')
+        df_b = load_robust_data(birim_file, 'master')
+        df_t = load_robust_data(tuketim_file, 'tuketim')
+        df_s = load_robust_data(stok_file, 'stok')
         
         if df_b.empty or df_t.empty or df_s.empty:
             st.warning("Dosyalar boş veya beklenen formatta okunamadı.")
             st.stop()
 
-        # Eksik sütun kontrolü
-        if 'BIRIM' not in df_b.columns: st.error("Master listede 'Birim Adı' bulunamadı."); st.stop()
-        if 'BIRIM' not in df_t.columns or 'URUN' not in df_t.columns or 'TUKETIM' not in df_t.columns: st.error("Tüketim listesinde sütun eksik."); st.stop()
-        if 'BIRIM' not in df_s.columns or 'URUN' not in df_s.columns or 'STOK' not in df_s.columns: st.error("Stok listesinde sütun eksik."); st.stop()
+        # Eksik Sütun Kontrolü (Zayi Sütunu Artık İsteğe Bağlı!)
+        if 'BIRIM' not in df_b.columns: 
+            st.error(f"Master listede 'Birim' sütunu bulunamadı. Lütfen kontrol edin.\n\nBulunan Sütunlar: {list(df_b.columns)}")
+            st.stop()
+        if 'BIRIM' not in df_t.columns or 'URUN' not in df_t.columns or 'TUKETIM' not in df_t.columns: 
+            st.error(f"Tüketim listesinde sütun eksik. (Birim, Ürün veya Uygulanan Doz bulunamadı)\n\nBulunan Sütunlar: {list(df_t.columns)}")
+            st.stop()
+        if 'BIRIM' not in df_s.columns or 'URUN' not in df_s.columns or 'STOK' not in df_s.columns: 
+            st.error(f"Stok listesinde sütun eksik. (Birim, Ürün veya Kalan Doz bulunamadı)\n\nBulunan Sütunlar: {list(df_s.columns)}")
+            st.stop()
+
+        # Zayi Sütunu Var mı Kontrolü (Uyarı İçin)
+        zayi_var_mi = 'ZAYI' in df_t.columns
 
         # Master Çoğaltmaları Temizle
         birim_master = df_b.drop_duplicates(subset=['BIRIM']).copy()
@@ -239,7 +256,7 @@ if tuketim_file and stok_file and birim_file:
 
         # Sayısal Dönüşümler
         df_t['TUKETIM'] = pd.to_numeric(df_t['TUKETIM'].astype(str).apply(clean_number), errors='coerce').fillna(0)
-        df_t['ZAYI'] = pd.to_numeric(df_t['ZAYI'].astype(str).apply(clean_number), errors='coerce').fillna(0) if 'ZAYI' in df_t.columns else 0
+        df_t['ZAYI'] = pd.to_numeric(df_t['ZAYI'].astype(str).apply(clean_number), errors='coerce').fillna(0) if zayi_var_mi else 0
 
         # --- MERGE VE SABİTLEME ---
         # Tüketim ve Stok verisini birleştir
@@ -486,6 +503,10 @@ if tuketim_file and stok_file and birim_file:
 
         with tab6:
             st.subheader("📉 Zayi ve Verimlilik Analizi")
+            
+            if not zayi_var_mi:
+                st.warning("⚠️ **DİKKAT:** Yüklenen Tüketim Raporunda 'Zayi' sütunu bulunmadığı için analizlerde tüm zayi verileri 0 (sıfır) olarak kabul edilmiştir.")
+            
             analiz_turu = st.radio("Analiz Türü:", ("Tüm Aşılar", "Sadece Tekli Doz Aşılar (Kritik)"), horizontal=True)
             df_zayi = df_f.copy()
             if "Tekli" in analiz_turu: df_zayi = df_zayi[~df_zayi['Urun'].str.upper().str.contains('BCG|POLIO|PPD', regex=True)]
@@ -510,7 +531,6 @@ if tuketim_file and stok_file and birim_file:
             st.dataframe(kurum_zayi, use_container_width=True, hide_index=True)
 
     except Exception as e:
-        st.error(f"Hata oluştu: {e}")
-        st.info("İpucu: Terminal ekranına (siyah ekrana) `pip install openpyxl` yazarak gerekli eklentiyi yüklediğinizden emin olun.")
+        st.error(f"Beklenmeyen bir hata oluştu: {e}")
 else:
     st.info("Lütfen Tüketim, Stok ve Master Birim listesi dosyalarını yükleyin.")
