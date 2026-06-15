@@ -21,11 +21,10 @@ def clean_number(x):
 def standardize_urun_adi(urun):
     if not isinstance(urun, str): return str(urun)
     
-    # İsimleri karşılaştırmaya hazırlamak için standartlaştır (Büyük harf, boşluk düzenlemesi)
+    # İsimleri karşılaştırmaya hazırlamak için standartlaştır
     u = urun.upper().replace('İ', 'I').replace('Ç', 'C').replace('Ş', 'S').replace('Ö', 'O').replace('Ü', 'U').replace('Ğ', 'G').strip()
-    u = re.sub(r'\s+', ' ', u) # Birden fazla boşluğu tek boşluğa indir
+    u = re.sub(r'\s+', ' ', u)
     
-    # Excel dosyanızdaki birebir eşleşme sözlüğü
     sozluk = {
         "TD - VAC 0,5 ML": "TD Adult (Erişkin Tip Tetanoz Difteri) Aşısı",
         "BIVALAN POLIO (OPV) ASISI (TIP 1-3)": "Oral Polio Aşısı (İki Bileşenli)",
@@ -61,16 +60,9 @@ def standardize_urun_adi(urun):
         "PENTAXIM 0,5 ML": "5 Bileşenli Karma (DaBT-İPA-Hib) Aşı"
     }
     
-    # 1. Aşama: Tam eşleşme ara
-    if u in sozluk:
-        return sozluk[u]
-        
-    # 2. Aşama: Kısmi eşleşme ara (Eğer ismin bir kısmı sözlükte geçiyorsa yakalar)
+    if u in sozluk: return sozluk[u]
     for key, val in sozluk.items():
-        if key in u or u in key:
-            return val
-            
-    # Eşleşmezse orijinal ismi döndür
+        if key in u or u in key: return val
     return urun.strip()
 
 def get_dates_from_file(file_obj):
@@ -90,8 +82,7 @@ def get_dates_from_file(file_obj):
         except: pass
     else:
         file_obj.seek(0)
-        try:
-            lines = [file_obj.readline().decode('utf-8-sig') for _ in range(15)]
+        try: lines = [file_obj.readline().decode('utf-8-sig') for _ in range(15)]
         except:
             file_obj.seek(0)
             lines = [file_obj.readline().decode('iso-8859-9') for _ in range(15)]
@@ -141,7 +132,6 @@ def to_pdf(df, title):
     pdf.set_font("Helvetica", "B", 8)
     cols = df.columns.tolist()
     col_width = 190 / len(cols)
-    
     for col in cols: pdf.cell(col_width, 8, tr_fix(str(col)), 1)
     pdf.ln()
     
@@ -172,14 +162,12 @@ def standardize_cols(df, source_type):
             elif cu in ['BIRIM TIPI']: rename_map[c] = 'TIP_MASTER'
             elif cu in ['ILCE']: rename_map[c] = 'ILCE_MASTER'
             elif cu in ['UST BIRIM']: rename_map[c] = 'UST_BIRIM_MASTER'
-            
         elif source_type == 'tuketim':
             if cu in ['BIRIM']: rename_map[c] = 'BIRIM'
             elif cu in ['URUN TANIMI', 'URUN']: rename_map[c] = 'URUN'
             elif cu in ['UYGULANAN DOZ', 'UYGULANAN']: rename_map[c] = 'TUKETIM'
             elif cu in ['ZAYI', 'ZAYI DOZ']: rename_map[c] = 'ZAYI'
             elif cu in ['ILCE']: rename_map[c] = 'ILCE_TEMP'
-            
         elif source_type == 'stok':
             if cu in ['BIRIM']: rename_map[c] = 'BIRIM'
             elif cu in ['URUN', 'URUN TANIMI']: rename_map[c] = 'URUN'
@@ -344,15 +332,26 @@ if tuketim_file and stok_file and birim_file:
         if 'Ust_Birim' not in res_df.columns: res_df['Ust_Birim'] = '-'
         res_df['Ust_Birim'] = res_df['Ust_Birim'].fillna('-')
 
+        # İSTANBUL İSM -> İL ANA DEPO KURALI EKLENDİ
         def infer_tip(row):
+            name_upper = str(row['Birim']).upper().replace('İ', 'I')
+            
+            # Öncelikle "İSTANBUL İSM" veya türevi geçiyorsa kesinlikle İl Ana Depo diyelim
+            if 'ISTANBUL ISM' in name_upper or 'IL ANA DEPO' in name_upper:
+                return 'İL ANA DEPO'
+                
+            # Eğer Master Data'da tipi belli ve doluysa onu kullan
             if 'Tip' in res_df.columns and pd.notna(row.get('Tip')) and str(row.get('Tip')).strip() != '':
                 return row['Tip']
-            name = str(row['Birim']).upper()
-            if 'ASM' in name or 'AILE SAGLIGI' in name: return 'ASM'
-            if 'TSM' in name or 'TOPLUM SAGLIGI' in name: return 'TSM'
-            if 'ISM' in name: return 'ISM'
-            if any(k in name for k in ['HASTANE', 'ÖZEL', 'OZEL', 'GÖÇMEN', 'MÜLTECİ', 'VEREM', 'DISPANSER']): return 'SON KULLANICI'
+                
+            # Aksi halde isminden tahmin et
+            if 'ASM' in name_upper or 'AILE SAGLIGI' in name_upper: return 'ASM'
+            if 'TSM' in name_upper or 'TOPLUM SAGLIGI' in name_upper: return 'TSM'
+            if 'ISM' in name_upper: return 'İL ANA DEPO'
+            if any(k in name_upper for k in ['HASTANE', 'ÖZEL', 'OZEL', 'GÖÇMEN', 'MÜLTECİ', 'VEREM', 'DISPANSER']): return 'SON KULLANICI'
+            
             return 'Bilinmiyor'
+            
         res_df['Tip'] = res_df.apply(infer_tip, axis=1)
 
         res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
@@ -391,8 +390,9 @@ if tuketim_file and stok_file and birim_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        df_saha = df_f[~df_f['Tip'].astype(str).str.upper().str.contains('ISM', na=False)]
-        df_ism = df_f[df_f['Tip'].astype(str).str.upper().str.contains('ISM', na=False)]
+        # İL ANA DEPO ve SAHA AYRIMI (Güncellendi)
+        df_saha = df_f[~df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO|ISM|İSM', regex=True, na=False)]
+        df_ism = df_f[df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO|ISM|İSM', regex=True, na=False)]
 
         grp_stok_saha = df_saha.groupby('Urun')['Stok'].sum()
         grp_stok_ism = df_ism.groupby('Urun')['Stok'].sum()
@@ -401,11 +401,11 @@ if tuketim_file and stok_file and birim_file:
         all_vaccines = grp_stok_saha.index.union(grp_stok_ism.index).union(grp_tuketim_total.index)
         df_genel = pd.DataFrame(index=all_vaccines)
         df_genel.index.name = 'Urun'
-        df_genel['İl Ana Depo (ISM)'] = grp_stok_ism
+        df_genel['İl Ana Depo'] = grp_stok_ism
         df_genel['Saha (TSM, ASM, Son)'] = grp_stok_saha
         df_genel['Toplam Tüketim'] = grp_tuketim_total
         df_genel = df_genel.fillna(0)
-        df_genel['İl Geneli Stok'] = df_genel['İl Ana Depo (ISM)'] + df_genel['Saha (TSM, ASM, Son)']
+        df_genel['İl Geneli Stok'] = df_genel['İl Ana Depo'] + df_genel['Saha (TSM, ASM, Son)']
         df_genel['Günlük ortalama tüketim'] = (df_genel['Toplam Tüketim'] / oto_gun_sayisi).round(2)
         df_genel['Yetme Süresi (Gün)'] = df_genel.apply(lambda r: round(r['İl Geneli Stok'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1)
 
@@ -426,9 +426,9 @@ if tuketim_file and stok_file and birim_file:
 
         with tab1:
             st.subheader("📊 İl Geneli Toplam Stok ve Tüketim Analizi")
-            df_genel['İl Ana Depo Yetme Süresi (Gün)'] = df_genel.apply(lambda r: round(r['İl Ana Depo (ISM)'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1)
+            df_genel['İl Ana Depo Yetme Süresi (Gün)'] = df_genel.apply(lambda r: round(r['İl Ana Depo'] / r['Günlük ortalama tüketim'], 1) if r['Günlük ortalama tüketim'] > 0 else 999, axis=1)
             df_genel = df_genel.reset_index()
-            cols_order = ['Urun', 'İl Geneli Stok', 'İl Ana Depo (ISM)', 'İl Ana Depo Yetme Süresi (Gün)', 'Saha (TSM, ASM, Son)', 'Toplam Tüketim', 'Günlük ortalama tüketim', 'Yetme Süresi (Gün)']
+            cols_order = ['Urun', 'İl Geneli Stok', 'İl Ana Depo', 'İl Ana Depo Yetme Süresi (Gün)', 'Saha (TSM, ASM, Son)', 'Toplam Tüketim', 'Günlük ortalama tüketim', 'Yetme Süresi (Gün)']
             df_genel = df_genel[cols_order]
 
             chart_df = df_genel.copy()
@@ -453,7 +453,7 @@ if tuketim_file and stok_file and birim_file:
             except AttributeError:
                 styled_df = df_genel.style.applymap(highlight_yetme_suresi, subset=['Yetme Süresi (Gün)', 'İl Ana Depo Yetme Süresi (Gün)'])
             
-            styled_df = styled_df.format({"Günlük ortalama tüketim": "{:.2f}", "Yetme Süresi (Gün)": "{:.1f}", "İl Ana Depo Yetme Süresi (Gün)": "{:.1f}", "İl Geneli Stok": "{:.0f}", "İl Ana Depo (ISM)": "{:.0f}", "Saha (TSM, ASM, Son)": "{:.0f}", "Toplam Tüketim": "{:.0f}"})
+            styled_df = styled_df.format({"Günlük ortalama tüketim": "{:.2f}", "Yetme Süresi (Gün)": "{:.1f}", "İl Ana Depo Yetme Süresi (Gün)": "{:.1f}", "İl Geneli Stok": "{:.0f}", "İl Ana Depo": "{:.0f}", "Saha (TSM, ASM, Son)": "{:.0f}", "Toplam Tüketim": "{:.0f}"})
             st.dataframe(styled_df, use_container_width=True, hide_index=True)
             c7, c8 = st.columns(2)
             with c7: st.download_button("📥 İl Geneli Excel", to_excel(df_genel), "il_geneli_ozet.xlsx")
@@ -517,7 +517,8 @@ if tuketim_file and stok_file and birim_file:
             transfer_onerileri = []
             for ilce in df_f['Ilce'].unique():
                 df_ilce = df_f[df_f['Ilce'] == ilce]
-                df_ilce_transfer = df_ilce[~df_ilce['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['ISM', 'TSM', 'DEPO']))].copy()
+                # Ana depoları transfer algoritmasından çıkar
+                df_ilce_transfer = df_ilce[~df_ilce['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['IL ANA DEPO', 'İL ANA DEPO', 'ISM', 'TSM', 'DEPO']))].copy()
                 
                 for urun in df_ilce_transfer['Urun'].unique():
                     alicilar = df_ilce_transfer[(df_ilce_transfer['Urun'] == urun) & (df_ilce_transfer['Gonderilecek'] > 0)].copy()
