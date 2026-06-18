@@ -56,7 +56,7 @@ def standardize_urun_adi(urun):
         "PPD TUBERCULIN MAMMALIAN": "PPD Solüsyonu",
         "HEPATITIS B VACCINE (RDNA)": "Hepatit B (Pediatrik) Aşısı",
         "VAXIGRIP 0,5 ML": "Mevsimsel İnfluenza Aşısı (Grip Aşısı)",
-        "ALBIES KUDUZ ANTISERUMU": "İnsan Kaynaklı Kuduz Antiserumu", # GÜNCEL DOSYAYA GÖRE DEĞİŞTİRİLDİ
+        "ALBIES KUDUZ ANTISERUMU": "İnsan Kaynaklı Kuduz Antiserumu",
         "RABIES VACCINE INACTIVATED": "Kuduz Aşısı",
         "DIFTET DT PEDIATRI ASISI": "DT Pediatrik (Pediatrik Tip Tetanoz Difteri) Aşısı",
         "MENQUADFI 0,5 ML IM": "Konjuge Menenjit (ACWY) Aşısı",
@@ -278,8 +278,24 @@ with col_u1: tuketim_file = st.file_uploader("📂 Tüketim Raporu", type=["csv"
 with col_u2: stok_file = st.file_uploader("📂 Stok Raporu", type=["csv", "xlsx", "xls"])
 with col_u3: birim_file = st.file_uploader("📂 Birimler Listesi (Master)", type=["csv", "xlsx", "xls"])
 
-# --- ANA PROGRAM ---
-if tuketim_file and stok_file and birim_file:
+st.markdown("---")
+
+# --- OTURUM (SESSION) DURUMU İÇİN KONTROL ---
+if 'analizi_baslat' not in st.session_state:
+    st.session_state.analizi_baslat = False
+
+# --- ÇALIŞTIR BUTONU ---
+calistir = st.button("🚀 Analizi Çalıştır", type="primary", use_container_width=True)
+
+if calistir:
+    if tuketim_file and stok_file and birim_file:
+        st.session_state.analizi_baslat = True
+    else:
+        st.error("🚨 Lütfen analizi çalıştırmadan önce tüm dosyaları yükleyin!")
+        st.session_state.analizi_baslat = False
+
+# --- ANA PROGRAM (SADECE BUTONA BASILDIYSA ÇALIŞIR) ---
+if st.session_state.analizi_baslat and tuketim_file and stok_file and birim_file:
     try:
         oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_file(tuketim_file)
         
@@ -591,5 +607,3 @@ if tuketim_file and stok_file and birim_file:
 
     except Exception as e:
         st.error(f"Beklenmeyen bir hata oluştu: {e}")
-else:
-    st.info("Lütfen Tüketim, Stok ve Master Birim listesi dosyalarını yükleyin.")
