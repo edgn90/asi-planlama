@@ -336,6 +336,7 @@ if tuketim_file and stok_file and birim_file:
 
     def infer_tip(row):
         name_upper = str(row['Birim']).upper().replace('İ', 'I')
+        # İSTANBUL İSM (İl Ana Depo) tespit ediliyor (İlçeden bağımsız)
         if 'ISTANBUL ISM' in name_upper or 'IL ANA DEPO' in name_upper: return 'İL ANA DEPO'
         if 'Tip' in res_df.columns and pd.notna(row.get('Tip')) and str(row.get('Tip')).strip() != '': return row['Tip']
         if 'ASM' in name_upper or 'AILE SAGLIGI' in name_upper: return 'ASM'
@@ -345,6 +346,10 @@ if tuketim_file and stok_file and birim_file:
         return 'Bilinmiyor'
         
     res_df['Tip'] = res_df.apply(infer_tip, axis=1)
+    
+    # YENİ KURAL: İL ANA DEPO TESPİT EDİLDİĞİNDE TÜKETİM VE ZAYİ SIFIRLANIR (Hesaba Katılmaz)
+    res_df.loc[res_df['Tip'] == 'İL ANA DEPO', ['Tuketim', 'Zayi']] = 0
+    
     res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
     
     def anomali_tespit(row):
