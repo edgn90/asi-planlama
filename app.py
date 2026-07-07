@@ -573,13 +573,33 @@ if tuketim_file and stok_file and birim_file:
             df_zayi = df_f.copy()
             if "Tekli" in analiz_turu: df_zayi = df_zayi[~df_zayi['Urun'].str.upper().str.contains('BCG|POLIO|PPD', regex=True)]
 
+            # YENİ EKLENEN İLÇE VE AŞI BAZLI DETAYLI ZAYİ RAPORU
+            zayi_detay = df_zayi.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
+            zayi_detay['Zayi Oranı (%)'] = zayi_detay.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
+            zayi_detay.rename(columns={'Ilce': 'İlçe', 'Urun': 'Aşı Türü', 'Tuketim': 'Toplam Uygulanan', 'Zayi': 'Toplam Zayi'}, inplace=True)
+            zayi_detay = zayi_detay.sort_values(by=['İlçe', 'Aşı Türü'])
+
+            st.markdown("#### 📋 İlçe ve Aşı Türü Bazlı Detaylı Zayi Raporu")
+            st.dataframe(zayi_detay, use_container_width=True, hide_index=True)
+            
+            # EXCEL İNDİRME BUTONU (YENİ)
+            st.download_button(
+                label="📥 Detaylı Zayi Raporunu Excel Olarak İndir", 
+                data=to_excel(zayi_detay), 
+                file_name="ilce_asi_zayi_detay_raporu.xlsx",
+                use_container_width=True
+            )
+            
+            st.markdown("---")
+
+            # Eski Özet Tablolar
             zayi_ozet = df_zayi.groupby('Ilce').agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
             zayi_ozet['Zayi Oranı (%)'] = zayi_ozet.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
             zayi_ozet = zayi_ozet.sort_values('Zayi', ascending=False)
             
             col_z1, col_z2 = st.columns(2)
             with col_z1:
-                st.markdown("#### 🏙️ İlçelere Göre Zayi Durumu")
+                st.markdown("#### 🏙️ İlçelere Göre Toplam Zayi Durumu")
                 st.dataframe(zayi_ozet, use_container_width=True, hide_index=True)
             with col_z2:
                 st.markdown("#### 💉 Aşılara Göre Toplam Zayi")
