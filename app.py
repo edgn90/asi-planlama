@@ -170,14 +170,12 @@ def standardize_cols(df, source_type):
             elif cu in ['UST BIRIM']: rename_map[c] = 'UST_BIRIM_MASTER'
         elif source_type == 'tuketim':
             if cu in ['BIRIM', 'KURUM ADI']: rename_map[c] = 'BIRIM'
-            # Genişletilmiş Aşı başlığı algılayıcı
             elif cu in ['URUN TANIMI', 'URUN', 'URUN ADI', 'ASI', 'ASI ADI']: rename_map[c] = 'URUN'
             elif cu in ['UYGULANAN DOZ', 'UYGULANAN', 'TUKETIM']: rename_map[c] = 'TUKETIM'
             elif 'ZAYI' in cu or 'FIRE' in cu or 'IMHA' in cu: rename_map[c] = 'ZAYI'
             elif cu in ['ILCE']: rename_map[c] = 'ILCE_TEMP'
         elif source_type == 'stok':
             if cu in ['BIRIM', 'KURUM ADI']: rename_map[c] = 'BIRIM'
-            # Genişletilmiş Aşı başlığı algılayıcı
             elif cu in ['URUN', 'URUN TANIMI', 'URUN ADI', 'ASI', 'ASI ADI']: rename_map[c] = 'URUN'
             elif cu in ['KALAN DOZ', 'KALAN', 'STOK']: rename_map[c] = 'STOK'
             elif cu in ['ILCE']: rename_map[c] = 'ILCE_TEMP'
@@ -270,7 +268,6 @@ if 'analiz_baslatildi' not in st.session_state:
 
 # --- ANA PROGRAM VE KAPSÜLLENMİŞ FORM ---
 if tuketim_file and stok_file and birim_file:
-    # 1. Aşama: Verilerin arka planda hızlıca okunması ve birleştirilmesi
     oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_file(tuketim_file)
     
     df_b = load_robust_data(birim_file, 'master')
@@ -281,7 +278,6 @@ if tuketim_file and stok_file and birim_file:
         st.warning("Dosyalar boş veya beklenen formatta okunamadı. Lütfen içeriği kontrol edin.")
         st.stop()
 
-    # --- AKILLI SÜTUN KONTROLÜ (Hataları Yutmadan Bildirir) ---
     eksik_tuketim = [c for c in ['BIRIM', 'URUN', 'TUKETIM'] if c not in df_t.columns]
     if eksik_tuketim:
         st.error(f"🚨 Tüketim Raporunda şu gerekli sütunlar bulunamadı: **{eksik_tuketim}**\n*(Lütfen dosyanızın başlıklarını kontrol edin)*")
@@ -342,14 +338,15 @@ if tuketim_file and stok_file and birim_file:
         if 'Tip' in res_df.columns and pd.notna(row.get('Tip')) and str(row.get('Tip')).strip() != '': 
             return row['Tip']
         if 'ASM' in name_upper or 'AILE SAGLIGI' in name_upper: return 'ASM'
-        if 'TSM' in name_upper or 'TOPLUM SAGLIGI' in name_upper: return 'TSM'
+        if 'TSM' in name_upper or 'TOPLUM SAGLIGI' in name_upper or 'ILCE SM' in name_upper or 'İLÇE SM' in name_upper: return 'TSM'
         if any(k in name_upper for k in ['HASTANE', 'ÖZEL', 'OZEL', 'GÖÇMEN', 'MÜLTECİ', 'VEREM', 'DISPANSER']): return 'SON KULLANICI'
         return 'Bilinmiyor'
         
     res_df['Tip'] = res_df.apply(infer_tip, axis=1)
     
     # İL ANA DEPO TESPİT EDİLDİĞİNDE TÜKETİM VE ZAYİ SIFIRLANIR (Hesaba Katılmaz)
-    res_df.loc[res_df['Tip'] == 'İL ANA DEPO', ['Tuketim', 'Zayi']] = 0
+    is_ana_depo_res = (res_df['Tip'] == 'İL ANA DEPO') | (res_df['Birim'].astype(str).str.upper().str.replace('İ', 'I').str.contains('ISTANBUL ISM', na=False))
+    res_df.loc[is_ana_depo_res, ['Tuketim', 'Zayi']] = 0
     
     res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
     
@@ -363,7 +360,7 @@ if tuketim_file and stok_file and birim_file:
         return False
     res_df['Veri_Anomalisi'] = res_df.apply(anomali_tespit, axis=1)
 
-    # 2. Aşama: YAN MENÜ FORMU (Tıklamalar artık sayfayı yenilemez, sadece Çalıştır butonu yeniler)
+    # YAN MENÜ FORMU
     with st.sidebar.form("ayar_ve_filtre_formu"):
         st.header("⚙️ Ayarlar ve Filtreler")
         plan_suresi = st.slider("Plan Süresi (Gün)", 1, 60, 10, help="Stokların kaç gün yetecek şekilde planlanacağını seçin.")
@@ -379,17 +376,14 @@ if tuketim_file and stok_file and birim_file:
         sec_ilce = st.multiselect("📍 İlçe Filtrele", options=sorted(res_df['Ilce'].unique()))
         sec_asi = st.multiselect("💉 Aşı Filtrele", options=sorted(res_df['Urun'].unique()))
         
-        # Formun gönderim butonu
         calistir_btn = st.form_submit_button("🚀 Analizi Çalıştır", type="primary", use_container_width=True)
 
     if calistir_btn:
         st.session_state['analiz_baslatildi'] = True
 
-    # Eğer kullanıcı henüz Çalıştır'a basmadıysa bilgi mesajı gösterip bekletiyoruz
     if not st.session_state.get('analiz_baslatildi', False):
         st.info("👈 Dosyalar başarıyla okundu! Lütfen sol menüden filtrelerinizi (İlçe, Aşı) seçip **'🚀 Analizi Çalıştır'** butonuna tıklayın.")
     
-    # 3. Aşama: "Çalıştır" butonuna basıldıysa Raporu Çiz
     else:
         res_df['Ihtiyac'] = ((res_df['Gunluk_Hiz'] * plan_suresi) * (1 + guvenlik_marji)) - res_df['Stok']
         res_df['Gonderilecek'] = res_df['Ihtiyac'].apply(ozellestirilmis_yuvarlama)
@@ -410,8 +404,10 @@ if tuketim_file and stok_file and birim_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        df_saha = df_f[~df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO', regex=True, na=False)]
-        df_ism = df_f[df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO', regex=True, na=False)]
+        # --- YENİ VE KESİN AYRIŞTIRMA MANTIĞI (ISM/İSM KARIŞIKLIĞI GİDERİLDİ) ---
+        is_ana_depo = (df_f['Tip'] == 'İL ANA DEPO') | (df_f['Birim'].astype(str).str.upper().str.replace('İ', 'I').str.contains('ISTANBUL ISM', na=False))
+        df_saha = df_f[~is_ana_depo]
+        df_ism = df_f[is_ana_depo]
 
         grp_stok_saha = df_saha.groupby('Urun')['Stok'].sum()
         grp_stok_ism = df_ism.groupby('Urun')['Stok'].sum()
@@ -579,7 +575,6 @@ if tuketim_file and stok_file and birim_file:
             df_zayi = df_f.copy()
             if "Tekli" in analiz_turu: df_zayi = df_zayi[~df_zayi['Urun'].str.upper().str.contains('BCG|POLIO|PPD', regex=True)]
 
-            # YENİ EKLENEN İLÇE VE AŞI BAZLI DETAYLI ZAYİ RAPORU
             zayi_detay = df_zayi.groupby(['Ilce', 'Urun']).agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
             zayi_detay['Zayi Oranı (%)'] = zayi_detay.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
             zayi_detay.rename(columns={'Ilce': 'İlçe', 'Urun': 'Aşı Türü', 'Tuketim': 'Toplam Uygulanan', 'Zayi': 'Toplam Zayi'}, inplace=True)
@@ -588,7 +583,6 @@ if tuketim_file and stok_file and birim_file:
             st.markdown("#### 📋 İlçe ve Aşı Türü Bazlı Detaylı Zayi Raporu")
             st.dataframe(zayi_detay, use_container_width=True, hide_index=True)
             
-            # EXCEL İNDİRME BUTONU (YENİ)
             st.download_button(
                 label="📥 Detaylı Zayi Raporunu Excel Olarak İndir", 
                 data=to_excel(zayi_detay), 
@@ -598,7 +592,6 @@ if tuketim_file and stok_file and birim_file:
             
             st.markdown("---")
 
-            # Eski Özet Tablolar
             zayi_ozet = df_zayi.groupby('Ilce').agg({'Tuketim': 'sum', 'Zayi': 'sum'}).reset_index()
             zayi_ozet['Zayi Oranı (%)'] = zayi_ozet.apply(lambda x: (x['Zayi'] / (x['Tuketim'] + x['Zayi']) * 100) if (x['Tuketim'] + x['Zayi']) > 0 else 0, axis=1).round(2)
             zayi_ozet = zayi_ozet.sort_values('Zayi', ascending=False)
