@@ -330,13 +330,24 @@ if tuketim_file and stok_file and birim_file:
     if 'Ust_Birim' not in res_df.columns: res_df['Ust_Birim'] = '-'
     res_df['Ust_Birim'] = res_df['Ust_Birim'].fillna('-')
 
+    # --- KESİN KURAL: Sadece Birim Adı İSTANBUL İSM / ISTANBUL ISM olanlar İl Ana Depo kabul edilir ---
+    def is_secilen_ana_depo(val):
+        u = str(val).upper().replace('İ', 'I').strip()
+        return u == 'ISTANBUL ISM' or 'ISTANBUL ISM' in u
+
     def infer_tip(row):
-        name_upper = str(row['Birim']).upper().replace('İ', 'I').strip()
-        # Sadece "İSTANBUL İSM" veya "ISTANBUL ISM" olanlar İl Ana Depo olarak kaydedilir
-        if name_upper == 'ISTANBUL ISM' or 'ISTANBUL ISM' in name_upper: 
+        if is_secilen_ana_depo(row['Birim']): 
             return 'İL ANA DEPO'
+        
+        # Eğer master listeden gelen Tip "İL ANA DEPO" vb. ise ancak birim adı İSTANBUL İSM değilse o etiket iptal edilir
         if 'Tip' in res_df.columns and pd.notna(row.get('Tip')) and str(row.get('Tip')).strip() != '': 
-            return row['Tip']
+            tip_val = str(row['Tip']).strip()
+            if tip_val.upper().replace('İ', 'I') in ['IL ANA DEPO', 'İL ANA DEPO', 'ANA DEPO', 'DEPO']:
+                pass
+            else:
+                return tip_val
+                
+        name_upper = str(row['Birim']).upper().replace('İ', 'I').strip()
         if 'ASM' in name_upper or 'AILE SAGLIGI' in name_upper: return 'ASM'
         if 'TSM' in name_upper or 'TOPLUM SAGLIGI' in name_upper or 'ILCE SM' in name_upper or 'İLÇE SM' in name_upper: return 'TSM'
         if any(k in name_upper for k in ['HASTANE', 'ÖZEL', 'OZEL', 'GÖÇMEN', 'MÜLTECİ', 'VEREM', 'DISPANSER']): return 'SON KULLANICI'
@@ -344,9 +355,13 @@ if tuketim_file and stok_file and birim_file:
         
     res_df['Tip'] = res_df.apply(infer_tip, axis=1)
     
-    # İL ANA DEPO TESPİT EDİLDİĞİNDE TÜKETİM VE ZAYİ SIFIRLANIR (Hesaba Katılmaz)
-    is_ana_depo_res = (res_df['Tip'] == 'İL ANA DEPO') | (res_df['Birim'].astype(str).str.upper().str.replace('İ', 'I').str.contains('ISTANBUL ISM', na=False))
-    res_df.loc[is_ana_depo_res, ['Tuketim', 'Zayi']] = 0
+    # İl Ana Depo olanların Tipini kesin olarak İL ANA DEPO yapıp, olmayanların üzerindeki hatalı etiketleri temizliyoruz
+    ana_depo_mask = res_df['Birim'].apply(is_secilen_ana_depo)
+    res_df.loc[ana_depo_mask, 'Tip'] = 'İL ANA DEPO'
+    res_df.loc[~ana_depo_mask & (res_df['Tip'] == 'İL ANA DEPO'), 'Tip'] = 'Bilinmiyor'
+    
+    # İL ANA DEPO TESPİT EDİLDİĞİNDE TÜKETİM VE ZAYİ SIFIRLANIR
+    res_df.loc[ana_depo_mask, ['Tuketim', 'Zayi']] = 0
     
     res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
     
@@ -404,10 +419,10 @@ if tuketim_file and stok_file and birim_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- YENİ VE KESİN AYRIŞTIRMA MANTIĞI (ISM/İSM KARIŞIKLIĞI GİDERİLDİ) ---
-        is_ana_depo = (df_f['Tip'] == 'İL ANA DEPO') | (df_f['Birim'].astype(str).str.upper().str.replace('İ', 'I').str.contains('ISTANBUL ISM', na=False))
-        df_saha = df_f[~is_ana_depo]
-        df_ism = df_f[is_ana_depo]
+        # --- KESİN AYRIŞTIRMA MANTIĞI: SADECE BİRİM ADI İSTANBUL İSM / ISTANBUL ISM OLANLAR İL ANA DEPO OLUR ---
+        is_ana_depo_final = df_f['Birim'].apply(is_secilen_ana_depo)
+        df_saha = df_f[~is_ana_depo_final]
+        df_ism = df_f[is_ana_depo_final]
 
         grp_stok_saha = df_saha.groupby('Urun')['Stok'].sum()
         grp_stok_ism = df_ism.groupby('Urun')['Stok'].sum()
@@ -530,7 +545,8 @@ if tuketim_file and stok_file and birim_file:
             transfer_onerileri = []
             for ilce in df_f['Ilce'].unique():
                 df_ilce = df_f[df_f['Ilce'] == ilce]
-                df_ilce_transfer = df_ilce[~df_ilce['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['IL ANA DEPO', 'İL ANA DEPO', 'TSM', 'DEPO']))].copy()
+                df_ilce_transfer = df_ilce[~df_ilce['Birim'].apply(is_secilen_ana_depo)].copy()
+                df_ilce_transfer = df_ilce_transfer[~df_ilce_transfer['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['TSM', 'DEPO']))]
                 
                 for urun in df_ilce_transfer['Urun'].unique():
                     alicilar = df_ilce_transfer[(df_ilce_transfer['Urun'] == urun) & (df_ilce_transfer['Gonderilecek'] > 0)].copy()
