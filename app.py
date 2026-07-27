@@ -335,19 +335,20 @@ if tuketim_file and stok_file and birim_file:
     res_df['Ust_Birim'] = res_df['Ust_Birim'].fillna('-')
 
     def infer_tip(row):
-        name_upper = str(row['Birim']).upper().replace('İ', 'I')
-        # İSTANBUL İSM (İl Ana Depo) tespit ediliyor (İlçeden bağımsız)
-        if 'ISTANBUL ISM' in name_upper or 'IL ANA DEPO' in name_upper: return 'İL ANA DEPO'
-        if 'Tip' in res_df.columns and pd.notna(row.get('Tip')) and str(row.get('Tip')).strip() != '': return row['Tip']
+        name_upper = str(row['Birim']).upper().replace('İ', 'I').strip()
+        # Sadece "İSTANBUL İSM" veya "ISTANBUL ISM" olanlar İl Ana Depo olarak kaydedilir
+        if name_upper == 'ISTANBUL ISM' or 'ISTANBUL ISM' in name_upper: 
+            return 'İL ANA DEPO'
+        if 'Tip' in res_df.columns and pd.notna(row.get('Tip')) and str(row.get('Tip')).strip() != '': 
+            return row['Tip']
         if 'ASM' in name_upper or 'AILE SAGLIGI' in name_upper: return 'ASM'
         if 'TSM' in name_upper or 'TOPLUM SAGLIGI' in name_upper: return 'TSM'
-        if 'ISM' in name_upper: return 'İL ANA DEPO'
         if any(k in name_upper for k in ['HASTANE', 'ÖZEL', 'OZEL', 'GÖÇMEN', 'MÜLTECİ', 'VEREM', 'DISPANSER']): return 'SON KULLANICI'
         return 'Bilinmiyor'
         
     res_df['Tip'] = res_df.apply(infer_tip, axis=1)
     
-    # YENİ KURAL: İL ANA DEPO TESPİT EDİLDİĞİNDE TÜKETİM VE ZAYİ SIFIRLANIR (Hesaba Katılmaz)
+    # İL ANA DEPO TESPİT EDİLDİĞİNDE TÜKETİM VE ZAYİ SIFIRLANIR (Hesaba Katılmaz)
     res_df.loc[res_df['Tip'] == 'İL ANA DEPO', ['Tuketim', 'Zayi']] = 0
     
     res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
@@ -409,8 +410,8 @@ if tuketim_file and stok_file and birim_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        df_saha = df_f[~df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO|ISM|İSM', regex=True, na=False)]
-        df_ism = df_f[df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO|ISM|İSM', regex=True, na=False)]
+        df_saha = df_f[~df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO', regex=True, na=False)]
+        df_ism = df_f[df_f['Tip'].astype(str).str.upper().str.contains('IL ANA DEPO|İL ANA DEPO', regex=True, na=False)]
 
         grp_stok_saha = df_saha.groupby('Urun')['Stok'].sum()
         grp_stok_ism = df_ism.groupby('Urun')['Stok'].sum()
@@ -533,7 +534,7 @@ if tuketim_file and stok_file and birim_file:
             transfer_onerileri = []
             for ilce in df_f['Ilce'].unique():
                 df_ilce = df_f[df_f['Ilce'] == ilce]
-                df_ilce_transfer = df_ilce[~df_ilce['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['IL ANA DEPO', 'İL ANA DEPO', 'ISM', 'TSM', 'DEPO']))].copy()
+                df_ilce_transfer = df_ilce[~df_ilce['Tip'].astype(str).str.upper().apply(lambda x: any(k in x for k in ['IL ANA DEPO', 'İL ANA DEPO', 'TSM', 'DEPO']))].copy()
                 
                 for urun in df_ilce_transfer['Urun'].unique():
                     alicilar = df_ilce_transfer[(df_ilce_transfer['Urun'] == urun) & (df_ilce_transfer['Gonderilecek'] > 0)].copy()
