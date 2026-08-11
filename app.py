@@ -251,10 +251,10 @@ def load_robust_data(file_obj, source_type):
     if not df.empty:
         df = standardize_cols(df, source_type)
         
-        # --- AŞAMA 1: Kurum adlarındaki görünmez özel boşluk karakterlerini (\xa0) ve fazla boşlukları temizler ---
+        # --- AŞAMA 1 (DÜZELTİLDİ): Vektörel Pandas fonksiyonlarıyla hatasız boşluk temizliği ---
         if 'BIRIM' in df.columns:
             df['BIRIM'] = df['BIRIM'].astype(str).str.replace('\xa0', ' ', regex=False)
-            df['BIRIM'] = df['BIRIM'].apply(lambda x: re.sub(r'\s+', ' ', x).strip())
+            df['BIRIM'] = df['BIRIM'].str.replace(r'\s+', ' ', regex=True).str.strip()
             
     return df
 
