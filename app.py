@@ -11,7 +11,7 @@ import re
 st.set_page_config(page_title="Akıllı Aşı Lojistik Paneli", layout="wide")
 st.title("💉 Akıllı Aşı Talep Tahmini ve Stok Yönetim Paneli")
 
-# --- YARDIMCI FONKSİYONLAR (GÜÇLENDİRİLMİŞ SAYI TEMİZLEYİCİ) ---
+# --- YARDIMCI FONKSİYONLAR ---
 def clean_number(x):
     if pd.isnull(x): return 0
     if isinstance(x, (int, float)): return float(x)
@@ -24,7 +24,6 @@ def clean_number(x):
     try: return float(x)
     except: return 0
 
-# YÜKLEDİĞİNİZ LİSTEYE GÖRE GÜNCELLENMİŞ AŞI SÖZLÜĞÜ (OTOMATİK ÇEVİRMEN)
 def standardize_urun_adi(urun):
     if not isinstance(urun, str): return str(urun)
     
@@ -251,6 +250,12 @@ def load_robust_data(file_obj, source_type):
             
     if not df.empty:
         df = standardize_cols(df, source_type)
+        
+        # --- AŞAMA 1: Kurum adlarındaki görünmez özel boşluk karakterlerini (\xa0) ve fazla boşlukları temizler ---
+        if 'BIRIM' in df.columns:
+            df['BIRIM'] = df['BIRIM'].astype(str).str.replace('\xa0', ' ', regex=False)
+            df['BIRIM'] = df['BIRIM'].apply(lambda x: re.sub(r'\s+', ' ', x).strip())
+            
     return df
 
 # --- DOSYA YÜKLEME ALANI ---
@@ -262,11 +267,9 @@ with col_u3: birim_file = st.file_uploader("📂 Birimler Listesi (Master)", typ
 
 st.markdown("---")
 
-# --- OTURUM (SESSION) DURUMU İÇİN KONTROL ---
 if 'analiz_baslatildi' not in st.session_state:
     st.session_state['analiz_baslatildi'] = False
 
-# --- ANA PROGRAM VE KAPSÜLLENMİŞ FORM ---
 if tuketim_file and stok_file and birim_file:
     oto_gun_sayisi, s_tarih, b_tarih = get_dates_from_file(tuketim_file)
     
@@ -280,16 +283,23 @@ if tuketim_file and stok_file and birim_file:
 
     eksik_tuketim = [c for c in ['BIRIM', 'URUN', 'TUKETIM'] if c not in df_t.columns]
     if eksik_tuketim:
-        st.error(f"🚨 Tüketim Raporunda şu gerekli sütunlar bulunamadı: **{eksik_tuketim}**\n*(Lütfen dosyanızın başlıklarını kontrol edin)*")
+        st.error(f"🚨 Tüketim Raporunda şu gerekli sütunlar bulunamadı: **{eksik_tuketim}**")
         st.stop()
         
     eksik_stok = [c for c in ['BIRIM', 'URUN', 'STOK'] if c not in df_s.columns]
     if eksik_stok:
-        st.error(f"🚨 Stok Raporunda şu gerekli sütunlar bulunamadı: **{eksik_stok}**\n*(Lütfen dosyanızın başlıklarını kontrol edin)*")
+        st.error(f"🚨 Stok Raporunda şu gerekli sütunlar bulunamadı: **{eksik_stok}**")
         st.stop()
 
     zayi_var_mi = 'ZAYI' in df_t.columns
     birim_master = df_b.drop_duplicates(subset=['BIRIM']).copy()
+    
+    # --- AŞAMA 2: ÇAPRAZ İLÇE EŞLEŞTİRME SÖZLÜĞÜ OLUŞTURULUYOR ---
+    ilce_dict = {}
+    if 'ILCE_TEMP' in df_t.columns:
+        ilce_dict.update(df_t.dropna(subset=['ILCE_TEMP']).drop_duplicates('BIRIM').set_index('BIRIM')['ILCE_TEMP'].to_dict())
+    if 'ILCE_MASTER' in birim_master.columns:
+        ilce_dict.update(birim_master.dropna(subset=['ILCE_MASTER']).drop_duplicates('BIRIM').set_index('BIRIM')['ILCE_MASTER'].to_dict())
 
     df_t['URUN'] = df_t['URUN'].apply(standardize_urun_adi)
     df_s['URUN'] = df_s['URUN'].apply(standardize_urun_adi)
@@ -324,13 +334,34 @@ if tuketim_file and stok_file and birim_file:
         'STOK': 'Stok'
     }, inplace=True)
 
-    if 'Ilce' not in res_df.columns: res_df['Ilce'] = 'BILINMIYOR'
-    res_df['Ilce'] = res_df['Ilce'].fillna('BILINMIYOR')
+    # İlçe Sözlükten Temin Ediliyor
+    res_df['Ilce'] = res_df['Ilce'].fillna(res_df['Birim'].map(ilce_dict))
     
+    # --- AŞAMA 3: YAPAY ZEKA METİN ANALİZİ (İSİMDEN İLÇE ÇIKARMA) ---
+    istanbul_ilceleri = [
+        "ADALAR", "ARNAVUTKÖY", "ATAŞEHİR", "AVCILAR", "BAĞCILAR", "BAHÇELİEVLER", "BAKIRKÖY", "BAŞAKŞEHİR", "BAYRAMPAŞA", "BEŞİKTAŞ", 
+        "BEYKOZ", "BEYLİKDÜZÜ", "BEYOĞLU", "BÜYÜKÇEKMECE", "ÇATALCA", "ÇEKMEKÖY", "ESENLER", "ESENYURT", "EYÜPSULTAN", "FATİH", 
+        "GAZİOSMANPAŞA", "GÜNGÖREN", "KADIKÖY", "KAĞITHANE", "KARTAL", "KÜÇÜKÇEKMECE", "MALTEPE", "PENDİK", "SANCAKTEPE", "SARIYER", 
+        "SİLİVRİ", "SULTANBEYLİ", "SULTANGAZİ", "ŞİLE", "ŞİŞLİ", "TUZLA", "ÜMRANİYE", "ÜSKÜDAR", "ZEYTİNBURNU"
+    ]
+    
+    def extract_ilce_name(birim_adi, mevcut_ilce):
+        if pd.notna(mevcut_ilce) and str(mevcut_ilce).strip() not in ['', '-', 'BILINMIYOR']:
+            return str(mevcut_ilce).strip()
+            
+        b_upper = str(birim_adi).upper().replace('İ', 'I')
+        for ilce in istanbul_ilceleri:
+            ilce_u = ilce.upper().replace('İ', 'I')
+            if b_upper.startswith(ilce_u) or f" {ilce_u} " in f" {b_upper} ":
+                return ilce
+        return "BILINMIYOR"
+
+    res_df['Ilce'] = res_df.apply(lambda r: extract_ilce_name(r['Birim'], r['Ilce']), axis=1)
+
     if 'Ust_Birim' not in res_df.columns: res_df['Ust_Birim'] = '-'
     res_df['Ust_Birim'] = res_df['Ust_Birim'].fillna('-')
 
-    # --- KESİN KURAL: Sadece Birim Adı İSTANBUL İSM / ISTANBUL ISM olanlar İl Ana Depo kabul edilir ---
+    # --- KESİN İL ANA DEPO KURALI ---
     def is_secilen_ana_depo(val):
         u = str(val).upper().replace('İ', 'I').strip()
         return u == 'ISTANBUL ISM' or 'ISTANBUL ISM' in u
@@ -339,7 +370,6 @@ if tuketim_file and stok_file and birim_file:
         if is_secilen_ana_depo(row['Birim']): 
             return 'İL ANA DEPO'
         
-        # Eğer master listeden gelen Tip "İL ANA DEPO" vb. ise ancak birim adı İSTANBUL İSM değilse o etiket iptal edilir
         if 'Tip' in res_df.columns and pd.notna(row.get('Tip')) and str(row.get('Tip')).strip() != '': 
             tip_val = str(row['Tip']).strip()
             if tip_val.upper().replace('İ', 'I') in ['IL ANA DEPO', 'İL ANA DEPO', 'ANA DEPO', 'DEPO']:
@@ -355,12 +385,10 @@ if tuketim_file and stok_file and birim_file:
         
     res_df['Tip'] = res_df.apply(infer_tip, axis=1)
     
-    # İl Ana Depo olanların Tipini kesin olarak İL ANA DEPO yapıp, olmayanların üzerindeki hatalı etiketleri temizliyoruz
     ana_depo_mask = res_df['Birim'].apply(is_secilen_ana_depo)
     res_df.loc[ana_depo_mask, 'Tip'] = 'İL ANA DEPO'
     res_df.loc[~ana_depo_mask & (res_df['Tip'] == 'İL ANA DEPO'), 'Tip'] = 'Bilinmiyor'
     
-    # İL ANA DEPO TESPİT EDİLDİĞİNDE TÜKETİM VE ZAYİ SIFIRLANIR
     res_df.loc[ana_depo_mask, ['Tuketim', 'Zayi']] = 0
     
     res_df['Gunluk_Hiz'] = res_df['Tuketim'] / oto_gun_sayisi
@@ -375,7 +403,6 @@ if tuketim_file and stok_file and birim_file:
         return False
     res_df['Veri_Anomalisi'] = res_df.apply(anomali_tespit, axis=1)
 
-    # YAN MENÜ FORMU
     with st.sidebar.form("ayar_ve_filtre_formu"):
         st.header("⚙️ Ayarlar ve Filtreler")
         plan_suresi = st.slider("Plan Süresi (Gün)", 1, 60, 10, help="Stokların kaç gün yetecek şekilde planlanacağını seçin.")
@@ -419,7 +446,6 @@ if tuketim_file and stok_file and birim_file:
         if sec_ilce: df_f = df_f[df_f['Ilce'].isin(sec_ilce)]
         if sec_asi: df_f = df_f[df_f['Urun'].isin(sec_asi)]
 
-        # --- KESİN AYRIŞTIRMA MANTIĞI: SADECE BİRİM ADI İSTANBUL İSM / ISTANBUL ISM OLANLAR İL ANA DEPO OLUR ---
         is_ana_depo_final = df_f['Birim'].apply(is_secilen_ana_depo)
         df_saha = df_f[~is_ana_depo_final]
         df_ism = df_f[is_ana_depo_final]
