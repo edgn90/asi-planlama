@@ -19,7 +19,10 @@ def clean_number(x):
     x = str(x).strip()
     if x == '-' or x == '': return 0
     
+    # Virgülden sonraki '.0' kısımlarını temizle
     if x.endswith('.0'): x = x[:-2]
+    
+    # Binlik ayraç olan nokta ve virgülleri tamamen kaldır
     x = x.replace('.', '').replace(',', '').replace('"', '')
     try: return float(x)
     except: return 0
@@ -209,7 +212,8 @@ def load_robust_data(file_obj, source_type):
             header_idx = find_header(lines)
             
             file_obj.seek(0)
-            df = pd.read_excel(file_obj, header=header_idx)
+            # DTYPE=STR KURALI: Pandas'ın noktaları virgül sanıp sayıların sıfırlarını yutmasını engeller!
+            df = pd.read_excel(file_obj, header=header_idx, dtype=str)
         except Exception as e:
             if "openpyxl" in str(e).lower():
                 st.error("🚨 **Eksik Kütüphane:** Excel okumak için terminalde `pip install openpyxl` çalıştırın.")
@@ -242,7 +246,8 @@ def load_robust_data(file_obj, source_type):
             try:
                 file_obj.seek(0)
                 kw = {k: v for k, v in m.items() if k != 'encoding'}
-                temp_df = pd.read_csv(file_obj, header=header_idx, encoding=m['encoding'], **kw)
+                # DTYPE=STR KURALI CSV İÇİN DE EKLENDİ
+                temp_df = pd.read_csv(file_obj, header=header_idx, encoding=m['encoding'], dtype=str, **kw)
                 if len(temp_df.columns) > 1:
                     df = temp_df
                     break
@@ -251,7 +256,6 @@ def load_robust_data(file_obj, source_type):
     if not df.empty:
         df = standardize_cols(df, source_type)
         
-        # --- AŞAMA 1 (DÜZELTİLDİ): Vektörel Pandas fonksiyonlarıyla hatasız boşluk temizliği ---
         if 'BIRIM' in df.columns:
             df['BIRIM'] = df['BIRIM'].astype(str).str.replace('\xa0', ' ', regex=False)
             df['BIRIM'] = df['BIRIM'].str.replace(r'\s+', ' ', regex=True).str.strip()
@@ -294,7 +298,6 @@ if tuketim_file and stok_file and birim_file:
     zayi_var_mi = 'ZAYI' in df_t.columns
     birim_master = df_b.drop_duplicates(subset=['BIRIM']).copy()
     
-    # --- AŞAMA 2: ÇAPRAZ İLÇE EŞLEŞTİRME SÖZLÜĞÜ OLUŞTURULUYOR ---
     ilce_dict = {}
     if 'ILCE_TEMP' in df_t.columns:
         ilce_dict.update(df_t.dropna(subset=['ILCE_TEMP']).drop_duplicates('BIRIM').set_index('BIRIM')['ILCE_TEMP'].to_dict())
@@ -334,10 +337,8 @@ if tuketim_file and stok_file and birim_file:
         'STOK': 'Stok'
     }, inplace=True)
 
-    # İlçe Sözlükten Temin Ediliyor
     res_df['Ilce'] = res_df['Ilce'].fillna(res_df['Birim'].map(ilce_dict))
     
-    # --- AŞAMA 3: YAPAY ZEKA METİN ANALİZİ (İSİMDEN İLÇE ÇIKARMA) ---
     istanbul_ilceleri = [
         "ADALAR", "ARNAVUTKÖY", "ATAŞEHİR", "AVCILAR", "BAĞCILAR", "BAHÇELİEVLER", "BAKIRKÖY", "BAŞAKŞEHİR", "BAYRAMPAŞA", "BEŞİKTAŞ", 
         "BEYKOZ", "BEYLİKDÜZÜ", "BEYOĞLU", "BÜYÜKÇEKMECE", "ÇATALCA", "ÇEKMEKÖY", "ESENLER", "ESENYURT", "EYÜPSULTAN", "FATİH", 
@@ -361,7 +362,6 @@ if tuketim_file and stok_file and birim_file:
     if 'Ust_Birim' not in res_df.columns: res_df['Ust_Birim'] = '-'
     res_df['Ust_Birim'] = res_df['Ust_Birim'].fillna('-')
 
-    # --- KESİN İL ANA DEPO KURALI ---
     def is_secilen_ana_depo(val):
         u = str(val).upper().replace('İ', 'I').strip()
         return u == 'ISTANBUL ISM' or 'ISTANBUL ISM' in u
