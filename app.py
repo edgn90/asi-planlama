@@ -666,10 +666,10 @@ if tuketim_file and stok_file and birim_file:
             if 'SKT' not in df_s_detay.columns or df_s_detay['SKT'].isna().all():
                 st.warning("⚠️ Yüklediğiniz Stok Raporunda 'Son Kullanma Tarihi' sütunu bulunamadı veya tarih formatları okunamadı.")
             else:
-                # --- TEKİL STOK SATIRLARINI BİRİM, AŞI VE SKT BAZINDA BİRLEŞTİRME (TOPLU HESAPLAMA) ---
+                # Tekil stok satırlarını Birim, Aşı ve SKT bazında birleştirme (Toplu Hesaplama)
                 df_s_detay_grouped = df_s_detay.groupby(['BIRIM', 'URUN', 'SKT'], as_index=False, dropna=False)['STOK'].sum()
                 
-                hiz_df = df_f[['Birim', 'Urun', 'Gunluk_Hiz', 'Ilce', 'Tip']].drop_duplicates()
+                hiz_df = df_f[['Birim', 'Urun', 'Gunluk_Hiz', 'Ilce', 'Tip', 'Stok']].drop_duplicates()
                 skt_df = pd.merge(df_s_detay_grouped, hiz_df, left_on=['BIRIM', 'URUN'], right_on=['Birim', 'Urun'], how='inner')
                 
                 skt_df = skt_df[skt_df['STOK'] > 0].copy()
@@ -685,8 +685,10 @@ if tuketim_file and stok_file and birim_file:
                 else:
                     skt_df['Gereken_Gun'] = skt_df.apply(lambda r: r['STOK'] / r['Gunluk_Hiz'] if r['Gunluk_Hiz'] > 0 else 9999, axis=1)
                     
-                    # Risk Durumu: Tüketmek için gereken gün, SKT'ye kalan günden büyükse aşılar zayi olma riski altındadır.
+                    # Risk Durumu ve Kurtarılması Gereken Doz Miktarı
                     skt_df['Risk_Durumu'] = skt_df.apply(lambda r: True if r['Gereken_Gun'] > r['SKT_Kalan_Gun'] else False, axis=1)
+                    skt_df['Kurtarilacak_Doz'] = skt_df['STOK'] - (skt_df['Gunluk_Hiz'] * skt_df['SKT_Kalan_Gun'])
+                    skt_df['Kurtarilacak_Doz'] = skt_df['Kurtarilacak_Doz'].apply(lambda x: int(np.ceil(x)) if x > 0 else 0)
                     
                     risk_df = skt_df[skt_df['Risk_Durumu'] == True].copy()
                     
@@ -695,23 +697,80 @@ if tuketim_file and stok_file and birim_file:
                     else:
                         st.error(f"🚨 **DİKKAT:** Önümüzdeki 3 ay içinde SKT'si dolacak olan ve mevcut tüketim hızına göre süreleri bitmeden **tüketilemeyecek** {len(risk_df)} kalem aşı tespit edildi!")
                         
-                        risk_df = risk_df[['Ilce', 'Tip', 'BIRIM', 'URUN', 'STOK', 'SKT', 'SKT_Kalan_Gun', 'Gunluk_Hiz', 'Gereken_Gun']]
-                        risk_df.rename(columns={
+                        gorsel_risk_df = risk_df[['Ilce', 'Tip', 'BIRIM', 'URUN', 'STOK', 'SKT', 'SKT_Kalan_Gun', 'Gunluk_Hiz', 'Gereken_Gun']].copy()
+                        gorsel_risk_df.rename(columns={
                             'BIRIM': 'Birim', 'URUN': 'Urun', 'STOK': 'Riskli Doz Miktarı', 
                             'SKT_Kalan_Gun': 'SKT\'ye Kalan Gün', 'Gunluk_Hiz': 'Günlük Tüketim',
                             'Gereken_Gun': 'Tüketim İçin Gereken Gün'
                         }, inplace=True)
                         
-                        risk_df['SKT'] = risk_df['SKT'].dt.strftime('%d.%m.%Y')
-                        risk_df['Günlük Tüketim'] = risk_df['Günlük Tüketim'].round(2)
-                        risk_df['Tüketim İçin Gereken Gün'] = risk_df['Tüketim İçin Gereken Gün'].apply(lambda x: "Hiç Tüketim Yok" if x >= 9999 else int(x))
+                        gorsel_risk_df['SKT'] = gorsel_risk_df['SKT'].dt.strftime('%d.%m.%Y')
+                        gorsel_risk_df['Günlük Tüketim'] = gorsel_risk_df['Günlük Tüketim'].round(2)
+                        gorsel_risk_df['Tüketim İçin Gereken Gün'] = gorsel_risk_df['Tüketim İçin Gereken Gün'].apply(lambda x: "Hiç Tüketim Yok" if x >= 9999 else int(x))
+                        gorsel_risk_df = gorsel_risk_df.sort_values('SKT\'ye Kalan Gün')
                         
-                        risk_df = risk_df.sort_values('SKT\'ye Kalan Gün')
-                        
-                        st.dataframe(risk_df, use_container_width=True, hide_index=True)
+                        st.dataframe(gorsel_risk_df, use_container_width=True, hide_index=True)
                         
                         c9, c10 = st.columns(2)
-                        with c9: st.download_button("📥 SKT Risk Excel", to_excel(risk_df), "skt_risk_analizi.xlsx")
-                        with c10: st.download_button("📥 SKT Risk PDF", to_pdf(risk_df, "SKT Risk Analizi"), "skt_risk_analizi.pdf")
+                        with c9: st.download_button("📥 SKT Risk Excel", to_excel(gorsel_risk_df), "skt_risk_analizi.xlsx")
+                        with c10: st.download_button("📥 SKT Risk PDF", to_pdf(gorsel_risk_df, "SKT Risk Analizi"), "skt_risk_analizi.pdf")
+                        
+                        # --- ZAYİ ÖNLEYİCİ AKILLI TRANSFER ALGORİTMASI ---
+                        st.markdown("---")
+                        st.markdown("#### 🔄 SKT Zayi Önleyici Transfer Önerileri (Aynı İlçe İçi)")
+                        st.markdown("Aşağıdaki liste, SKT'si dolmak üzere olan ve çöpe gitme riski taşıyan aşıları kurtarmak için; **aynı ilçe içindeki**, elinde aynı üründen en az bulunan ve tüketim hızı en yüksek olan **ASM'lere (Aile Sağlığı Merkezleri)** yapılan otomatik transfer önerileridir.")
+                        
+                        skt_transferler = []
+                        
+                        # Sadece riskli ve kurtarılması gereken dozu olanlar için döngü
+                        for idx, row in risk_df[risk_df['Kurtarilacak_Doz'] > 0].iterrows():
+                            verici = row['BIRIM']
+                            urun = row['URUN']
+                            ilce = row['Ilce']
+                            kalan_gun = row['SKT_Kalan_Gun']
+                            kurtarilacak = row['Kurtarilacak_Doz']
+                            
+                            # Aynı ilçe içinde, verici kurum hariç sadece ASM'leri potansiyel alıcı olarak listele
+                            alicilar = df_f[(df_f['Ilce'] == ilce) & (df_f['Urun'] == urun) & (df_f['Birim'] != verici) & (df_f['Tip'].astype(str).str.upper().str.contains('ASM'))].copy()
+                            
+                            if alicilar.empty:
+                                continue
+                                
+                            # Alıcının SKT'ye kadar tüketebileceği kapasite hesabı
+                            alicilar['Kapasite'] = (alicilar['Gunluk_Hiz'] * kalan_gun) - alicilar['Stok']
+                            alicilar = alicilar[alicilar['Kapasite'] >= 1].copy()
+                            
+                            if alicilar.empty:
+                                continue
+                                
+                            # Elinde en az olan (Stok: Artan) ve Tüketimi en fazla olan (Hız: Azalan) ASM'leri öne al
+                            alicilar = alicilar.sort_values(by=['Stok', 'Gunluk_Hiz'], ascending=[True, False])
+                            
+                            for a_idx, alici in alicilar.iterrows():
+                                if kurtarilacak <= 0:
+                                    break
+                                
+                                transfer_miktari = min(kurtarilacak, int(alici['Kapasite']))
+                                if transfer_miktari > 0:
+                                    skt_transferler.append({
+                                        'İlçe': ilce,
+                                        'Ürün': urun,
+                                        'Kimden (Riski Taşıyan)': verici,
+                                        'Kime (Alıcı ASM)': alici['Birim'],
+                                        'SKT': row['SKT'].strftime('%d.%m.%Y'),
+                                        'Transfer Önerisi (Doz)': transfer_miktari
+                                    })
+                                    kurtarilacak -= transfer_miktari
+                        
+                        if skt_transferler:
+                            df_skt_transfer = pd.DataFrame(skt_transferler)
+                            st.success(f"Zayi riski taşıyan aşıları kurtaracak {len(df_skt_transfer)} adet transfer önerisi bulundu!")
+                            st.dataframe(df_skt_transfer, use_container_width=True, hide_index=True)
+                            
+                            c11, c12 = st.columns(2)
+                            with c11: st.download_button("📥 SKT Transfer Önerileri Excel", to_excel(df_skt_transfer), "skt_kurtarma_transferleri.xlsx")
+                            with c12: st.download_button("📥 SKT Transfer Önerileri PDF", to_pdf(df_skt_transfer, "SKT Zayi Onleyici Transferler"), "skt_kurtarma_transferleri.pdf")
+                        else:
+                            st.info("Aynı ilçe içerisinde bu aşıları süreleri dolmadan tüketebilecek uygun kapasitede bir ASM bulunamadı.")
 else:
     st.info("Lütfen Tüketim, Stok ve Master Birim listesi dosyalarını yükleyin.")
