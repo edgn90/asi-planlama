@@ -19,10 +19,8 @@ def clean_number(x):
     x = str(x).strip()
     if x == '-' or x == '': return 0
     
-    # Virgülden sonraki '.0' kısımlarını temizle
     if x.endswith('.0'): x = x[:-2]
     
-    # Binlik ayraç olan nokta ve virgülleri tamamen kaldır
     x = x.replace('.', '').replace(',', '').replace('"', '')
     try: return float(x)
     except: return 0
@@ -181,6 +179,7 @@ def standardize_cols(df, source_type):
             elif cu in ['URUN', 'URUN TANIMI', 'URUN ADI', 'ASI', 'ASI ADI']: rename_map[c] = 'URUN'
             elif cu in ['KALAN DOZ', 'KALAN', 'STOK']: rename_map[c] = 'STOK'
             elif cu in ['ILCE']: rename_map[c] = 'ILCE_TEMP'
+            elif cu in ['SON KULLANMA TARIHI', 'MIAD', 'SKT']: rename_map[c] = 'SKT'
 
     df.rename(columns=rename_map, inplace=True)
     df = df.loc[:, ~df.columns.duplicated()] 
@@ -212,7 +211,6 @@ def load_robust_data(file_obj, source_type):
             header_idx = find_header(lines)
             
             file_obj.seek(0)
-            # DTYPE=STR KURALI: Pandas'ın noktaları virgül sanıp sayıların sıfırlarını yutmasını engeller!
             df = pd.read_excel(file_obj, header=header_idx, dtype=str)
         except Exception as e:
             if "openpyxl" in str(e).lower():
@@ -246,7 +244,6 @@ def load_robust_data(file_obj, source_type):
             try:
                 file_obj.seek(0)
                 kw = {k: v for k, v in m.items() if k != 'encoding'}
-                # DTYPE=STR KURALI CSV İÇİN DE EKLENDİ
                 temp_df = pd.read_csv(file_obj, header=header_idx, encoding=m['encoding'], dtype=str, **kw)
                 if len(temp_df.columns) > 1:
                     df = temp_df
@@ -306,6 +303,15 @@ if tuketim_file and stok_file and birim_file:
 
     df_t['URUN'] = df_t['URUN'].apply(standardize_urun_adi)
     df_s['URUN'] = df_s['URUN'].apply(standardize_urun_adi)
+
+    # --- SKT DETAYINI HAFIZADA TUTMA ---
+    df_s_detay = df_s.copy()
+    df_s_detay['STOK'] = pd.to_numeric(df_s_detay['STOK'].apply(clean_number), errors='coerce').fillna(0)
+    if 'SKT' in df_s_detay.columns:
+        df_s_detay['SKT'] = pd.to_datetime(df_s_detay['SKT'], errors='coerce')
+    else:
+        df_s_detay['SKT'] = pd.NaT
+    # -----------------------------------
 
     df_t = df_t[~df_t['BIRIM'].astype(str).str.upper().str.contains('TOPLAM', na=False)]
     df_t = df_t[df_t['BIRIM'] != '-']
@@ -473,9 +479,9 @@ if tuketim_file and stok_file and birim_file:
         m3.metric("⚠️ AŞIRI STOK", len(df_f[df_f['Durum'] == "⚠️ AŞIRI"]))
         m4.metric("🏢 KURUM SAYISI", df_f[df_f['Gonderilecek'] > 0]['Birim'].nunique())
         
-        tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
             "📊 İl Geneli", "📍 İlçe Bazlı Özet", "📦 Sevkiyat Planı", 
-            "⚠️ Fazla ve Ölü Stok", "🔄 Akıllı Transfer", "📉 Zayi ve Verimlilik"
+            "⚠️ Fazla ve Ölü Stok", "🔄 Akıllı Transfer", "📉 Zayi ve Verimlilik", "⏳ SKT Risk Analizi"
         ])
 
         with tab1:
@@ -652,5 +658,51 @@ if tuketim_file and stok_file and birim_file:
             kurum_zayi = df_zayi.groupby(['Ilce', 'Birim', 'Urun']).agg({'Zayi': 'sum'}).reset_index()
             kurum_zayi = kurum_zayi[kurum_zayi['Zayi'] > 0].sort_values('Zayi', ascending=False).head(20)
             st.dataframe(kurum_zayi, use_container_width=True, hide_index=True)
+
+        with tab7:
+            st.subheader("⏳ Son Kullanma Tarihi (SKT) Risk Analizi")
+            st.markdown("Birimlerin mevcut **Günlük Tüketim Hızı** baz alınarak, ellerindeki aşıların **Son Kullanma Tarihi (SKT)** gelmeden tüketilip tüketilemeyeceği hesaplanır. SKT'si dolmadan tüketilemeyecek olan (veya zaten süresi geçmiş) aşılar aşağıda listelenmiştir.")
+            
+            if 'SKT' not in df_s_detay.columns or df_s_detay['SKT'].isna().all():
+                st.warning("⚠️ Yüklediğiniz Stok Raporunda 'Son Kullanma Tarihi' sütunu bulunamadı veya tarih formatları okunamadı.")
+            else:
+                hiz_df = df_f[['Birim', 'Urun', 'Gunluk_Hiz', 'Ilce', 'Tip']].drop_duplicates()
+                skt_df = pd.merge(df_s_detay, hiz_df, left_on=['BIRIM', 'URUN'], right_on=['Birim', 'Urun'], how='inner')
+                
+                skt_df = skt_df[skt_df['STOK'] > 0].copy()
+                
+                bugun = pd.Timestamp.now()
+                skt_df['SKT_Kalan_Gun'] = (skt_df['SKT'] - bugun).dt.days
+                
+                skt_df['Gereken_Gun'] = skt_df.apply(lambda r: r['STOK'] / r['Gunluk_Hiz'] if r['Gunluk_Hiz'] > 0 else 9999, axis=1)
+                
+                # Risk Durumu: Tüketmek için gereken gün, SKT'ye kalan günden büyükse aşılar zayi olma riski altındadır.
+                skt_df['Risk_Durumu'] = skt_df.apply(lambda r: True if r['Gereken_Gun'] > r['SKT_Kalan_Gun'] else False, axis=1)
+                
+                risk_df = skt_df[skt_df['Risk_Durumu'] == True].copy()
+                
+                if risk_df.empty:
+                    st.success("🎉 Tebrikler! Mevcut tüketim hızlarına göre SKT riski (kullanılmadan çöpe gitme ihtimali) taşıyan aşı bulunmamaktadır.")
+                else:
+                    st.error(f"🚨 **DİKKAT:** Tüketim hızına göre SKT'si dolmadan **tüketilemeyecek** {len(risk_df)} parti aşı tespit edildi!")
+                    
+                    risk_df = risk_df[['Ilce', 'Tip', 'BIRIM', 'URUN', 'STOK', 'SKT', 'SKT_Kalan_Gun', 'Gunluk_Hiz', 'Gereken_Gun']]
+                    risk_df.rename(columns={
+                        'BIRIM': 'Birim', 'URUN': 'Urun', 'STOK': 'Riskli Doz Miktarı', 
+                        'SKT_Kalan_Gun': 'SKT\'ye Kalan Gün', 'Gunluk_Hiz': 'Günlük Tüketim',
+                        'Gereken_Gun': 'Tüketim İçin Gereken Gün'
+                    }, inplace=True)
+                    
+                    risk_df['SKT'] = risk_df['SKT'].dt.strftime('%d.%m.%Y')
+                    risk_df['Günlük Tüketim'] = risk_df['Günlük Tüketim'].round(2)
+                    risk_df['Tüketim İçin Gereken Gün'] = risk_df['Tüketim İçin Gereken Gün'].apply(lambda x: "Hiç Tüketim Yok" if x >= 9999 else int(x))
+                    
+                    risk_df = risk_df.sort_values('SKT\'ye Kalan Gün')
+                    
+                    st.dataframe(risk_df, use_container_width=True, hide_index=True)
+                    
+                    c9, c10 = st.columns(2)
+                    with c9: st.download_button("📥 SKT Risk Excel", to_excel(risk_df), "skt_risk_analizi.xlsx")
+                    with c10: st.download_button("📥 SKT Risk PDF", to_pdf(risk_df, "SKT Risk Analizi"), "skt_risk_analizi.pdf")
 else:
     st.info("Lütfen Tüketim, Stok ve Master Birim listesi dosyalarını yükleyin.")
