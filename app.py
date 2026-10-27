@@ -304,7 +304,7 @@ if tuketim_file and stok_file and birim_file:
     df_t['URUN'] = df_t['URUN'].apply(standardize_urun_adi)
     df_s['URUN'] = df_s['URUN'].apply(standardize_urun_adi)
 
-    # --- SKT DETAYINI HAFIZADA TUTMA ---
+    # --- SKT DETAYINI HAFIZADA TUTMA VE TOPLU HESAPLAMA İÇİN GRUPLAMA ---
     df_s_detay = df_s.copy()
     df_s_detay['STOK'] = pd.to_numeric(df_s_detay['STOK'].apply(clean_number), errors='coerce').fillna(0)
     if 'SKT' in df_s_detay.columns:
@@ -666,15 +666,18 @@ if tuketim_file and stok_file and birim_file:
             if 'SKT' not in df_s_detay.columns or df_s_detay['SKT'].isna().all():
                 st.warning("⚠️ Yüklediğiniz Stok Raporunda 'Son Kullanma Tarihi' sütunu bulunamadı veya tarih formatları okunamadı.")
             else:
+                # --- TEKİL STOK SATIRLARINI BİRİM, AŞI VE SKT BAZINDA BİRLEŞTİRME (TOPLU HESAPLAMA) ---
+                df_s_detay_grouped = df_s_detay.groupby(['BIRIM', 'URUN', 'SKT'], as_index=False, dropna=False)['STOK'].sum()
+                
                 hiz_df = df_f[['Birim', 'Urun', 'Gunluk_Hiz', 'Ilce', 'Tip']].drop_duplicates()
-                skt_df = pd.merge(df_s_detay, hiz_df, left_on=['BIRIM', 'URUN'], right_on=['Birim', 'Urun'], how='inner')
+                skt_df = pd.merge(df_s_detay_grouped, hiz_df, left_on=['BIRIM', 'URUN'], right_on=['Birim', 'Urun'], how='inner')
                 
                 skt_df = skt_df[skt_df['STOK'] > 0].copy()
                 
                 bugun = pd.Timestamp.now()
                 skt_df['SKT_Kalan_Gun'] = (skt_df['SKT'] - bugun).dt.days
                 
-                # --- SADECE ÖNÜMÜZDEKİ 3 AY (90 GÜN) İÇİNDE SKT'Sİ DOLACAKLAR FİLTRESİ ---
+                # Önümüzdeki 3 ay (90 gün) filtresi
                 skt_df = skt_df[skt_df['SKT_Kalan_Gun'] <= 90].copy()
                 
                 if skt_df.empty:
@@ -690,7 +693,7 @@ if tuketim_file and stok_file and birim_file:
                     if risk_df.empty:
                         st.success("🎉 Tebrikler! Önümüzdeki 3 ay içinde SKT'si dolacak aşılar mevcut olsa da, tüketim hızlarına göre tümünün zayi olmadan (süresi dolmadan) tüketileceği öngörülmektedir.")
                     else:
-                        st.error(f"🚨 **DİKKAT:** Önümüzdeki 3 ay içinde SKT'si dolacak olan ve mevcut tüketim hızına göre süreleri bitmeden **tüketilemeyecek** {len(risk_df)} parti aşı tespit edildi!")
+                        st.error(f"🚨 **DİKKAT:** Önümüzdeki 3 ay içinde SKT'si dolacak olan ve mevcut tüketim hızına göre süreleri bitmeden **tüketilemeyecek** {len(risk_df)} kalem aşı tespit edildi!")
                         
                         risk_df = risk_df[['Ilce', 'Tip', 'BIRIM', 'URUN', 'STOK', 'SKT', 'SKT_Kalan_Gun', 'Gunluk_Hiz', 'Gereken_Gun']]
                         risk_df.rename(columns={
