@@ -660,8 +660,8 @@ if tuketim_file and stok_file and birim_file:
             st.dataframe(kurum_zayi, use_container_width=True, hide_index=True)
 
         with tab7:
-            st.subheader("⏳ Son Kullanma Tarihi (SKT) Risk Analizi")
-            st.markdown("Birimlerin mevcut **Günlük Tüketim Hızı** baz alınarak, ellerindeki aşıların **Son Kullanma Tarihi (SKT)** gelmeden tüketilip tüketilemeyeceği hesaplanır. SKT'si dolmadan tüketilemeyecek olan (veya zaten süresi geçmiş) aşılar aşağıda listelenmiştir.")
+            st.subheader("⏳ Son Kullanma Tarihi (SKT) Risk Analizi (Yakın Tarihli Aşılar)")
+            st.markdown("Sadece önümüzdeki **3 ay (90 gün)** içerisinde Son Kullanma Tarihi (SKT) dolacak olan aşılar mercek altına alınmıştır. Birimlerin mevcut **Günlük Tüketim Hızı** baz alınarak, bu yakın tarihli aşıların süreleri dolmadan tüketilip tüketilemeyeceği hesaplanır. SKT'si dolmadan tüketilemeyecek olanlar aşağıda listelenmiştir.")
             
             if 'SKT' not in df_s_detay.columns or df_s_detay['SKT'].isna().all():
                 st.warning("⚠️ Yüklediğiniz Stok Raporunda 'Son Kullanma Tarihi' sütunu bulunamadı veya tarih formatları okunamadı.")
@@ -674,35 +674,41 @@ if tuketim_file and stok_file and birim_file:
                 bugun = pd.Timestamp.now()
                 skt_df['SKT_Kalan_Gun'] = (skt_df['SKT'] - bugun).dt.days
                 
-                skt_df['Gereken_Gun'] = skt_df.apply(lambda r: r['STOK'] / r['Gunluk_Hiz'] if r['Gunluk_Hiz'] > 0 else 9999, axis=1)
+                # --- SADECE ÖNÜMÜZDEKİ 3 AY (90 GÜN) İÇİNDE SKT'Sİ DOLACAKLAR FİLTRESİ ---
+                skt_df = skt_df[skt_df['SKT_Kalan_Gun'] <= 90].copy()
                 
-                # Risk Durumu: Tüketmek için gereken gün, SKT'ye kalan günden büyükse aşılar zayi olma riski altındadır.
-                skt_df['Risk_Durumu'] = skt_df.apply(lambda r: True if r['Gereken_Gun'] > r['SKT_Kalan_Gun'] else False, axis=1)
-                
-                risk_df = skt_df[skt_df['Risk_Durumu'] == True].copy()
-                
-                if risk_df.empty:
-                    st.success("🎉 Tebrikler! Mevcut tüketim hızlarına göre SKT riski (kullanılmadan çöpe gitme ihtimali) taşıyan aşı bulunmamaktadır.")
+                if skt_df.empty:
+                    st.success("🎉 İnceleme tamamlandı: Önümüzdeki 3 ay (90 gün) içerisinde SKT'si dolacak herhangi bir aşı stoğu bulunmamaktadır.")
                 else:
-                    st.error(f"🚨 **DİKKAT:** Tüketim hızına göre SKT'si dolmadan **tüketilemeyecek** {len(risk_df)} parti aşı tespit edildi!")
+                    skt_df['Gereken_Gun'] = skt_df.apply(lambda r: r['STOK'] / r['Gunluk_Hiz'] if r['Gunluk_Hiz'] > 0 else 9999, axis=1)
                     
-                    risk_df = risk_df[['Ilce', 'Tip', 'BIRIM', 'URUN', 'STOK', 'SKT', 'SKT_Kalan_Gun', 'Gunluk_Hiz', 'Gereken_Gun']]
-                    risk_df.rename(columns={
-                        'BIRIM': 'Birim', 'URUN': 'Urun', 'STOK': 'Riskli Doz Miktarı', 
-                        'SKT_Kalan_Gun': 'SKT\'ye Kalan Gün', 'Gunluk_Hiz': 'Günlük Tüketim',
-                        'Gereken_Gun': 'Tüketim İçin Gereken Gün'
-                    }, inplace=True)
+                    # Risk Durumu: Tüketmek için gereken gün, SKT'ye kalan günden büyükse aşılar zayi olma riski altındadır.
+                    skt_df['Risk_Durumu'] = skt_df.apply(lambda r: True if r['Gereken_Gun'] > r['SKT_Kalan_Gun'] else False, axis=1)
                     
-                    risk_df['SKT'] = risk_df['SKT'].dt.strftime('%d.%m.%Y')
-                    risk_df['Günlük Tüketim'] = risk_df['Günlük Tüketim'].round(2)
-                    risk_df['Tüketim İçin Gereken Gün'] = risk_df['Tüketim İçin Gereken Gün'].apply(lambda x: "Hiç Tüketim Yok" if x >= 9999 else int(x))
+                    risk_df = skt_df[skt_df['Risk_Durumu'] == True].copy()
                     
-                    risk_df = risk_df.sort_values('SKT\'ye Kalan Gün')
-                    
-                    st.dataframe(risk_df, use_container_width=True, hide_index=True)
-                    
-                    c9, c10 = st.columns(2)
-                    with c9: st.download_button("📥 SKT Risk Excel", to_excel(risk_df), "skt_risk_analizi.xlsx")
-                    with c10: st.download_button("📥 SKT Risk PDF", to_pdf(risk_df, "SKT Risk Analizi"), "skt_risk_analizi.pdf")
+                    if risk_df.empty:
+                        st.success("🎉 Tebrikler! Önümüzdeki 3 ay içinde SKT'si dolacak aşılar mevcut olsa da, tüketim hızlarına göre tümünün zayi olmadan (süresi dolmadan) tüketileceği öngörülmektedir.")
+                    else:
+                        st.error(f"🚨 **DİKKAT:** Önümüzdeki 3 ay içinde SKT'si dolacak olan ve mevcut tüketim hızına göre süreleri bitmeden **tüketilemeyecek** {len(risk_df)} parti aşı tespit edildi!")
+                        
+                        risk_df = risk_df[['Ilce', 'Tip', 'BIRIM', 'URUN', 'STOK', 'SKT', 'SKT_Kalan_Gun', 'Gunluk_Hiz', 'Gereken_Gun']]
+                        risk_df.rename(columns={
+                            'BIRIM': 'Birim', 'URUN': 'Urun', 'STOK': 'Riskli Doz Miktarı', 
+                            'SKT_Kalan_Gun': 'SKT\'ye Kalan Gün', 'Gunluk_Hiz': 'Günlük Tüketim',
+                            'Gereken_Gun': 'Tüketim İçin Gereken Gün'
+                        }, inplace=True)
+                        
+                        risk_df['SKT'] = risk_df['SKT'].dt.strftime('%d.%m.%Y')
+                        risk_df['Günlük Tüketim'] = risk_df['Günlük Tüketim'].round(2)
+                        risk_df['Tüketim İçin Gereken Gün'] = risk_df['Tüketim İçin Gereken Gün'].apply(lambda x: "Hiç Tüketim Yok" if x >= 9999 else int(x))
+                        
+                        risk_df = risk_df.sort_values('SKT\'ye Kalan Gün')
+                        
+                        st.dataframe(risk_df, use_container_width=True, hide_index=True)
+                        
+                        c9, c10 = st.columns(2)
+                        with c9: st.download_button("📥 SKT Risk Excel", to_excel(risk_df), "skt_risk_analizi.xlsx")
+                        with c10: st.download_button("📥 SKT Risk PDF", to_pdf(risk_df, "SKT Risk Analizi"), "skt_risk_analizi.pdf")
 else:
     st.info("Lütfen Tüketim, Stok ve Master Birim listesi dosyalarını yükleyin.")
