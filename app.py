@@ -751,7 +751,8 @@ if tuketim_file and stok_file and birim_file:
                                     break
                                 
                                 transfer_miktari = min(kurtarilacak, int(alici['Kapasite']))
-                                if transfer_miktari > 0:
+                                # --- 3 DOZ VE ÜZERİ TRANSFER KISITI ---
+                                if transfer_miktari >= 3:
                                     skt_transferler.append({
                                         'İlçe': ilce,
                                         'Ürün': urun,
@@ -764,13 +765,13 @@ if tuketim_file and stok_file and birim_file:
                         
                         if skt_transferler:
                             df_skt_transfer = pd.DataFrame(skt_transferler)
-                            st.success(f"Zayi riski taşıyan aşıları kurtaracak {len(df_skt_transfer)} adet transfer önerisi bulundu!")
+                            st.success(f"Zayi riski taşıyan aşıları kurtaracak {len(df_skt_transfer)} adet (En az 3 Doz) transfer önerisi bulundu!")
                             st.dataframe(df_skt_transfer, use_container_width=True, hide_index=True)
                             
                             c11, c12 = st.columns(2)
                             with c11: st.download_button("📥 SKT Transfer Önerileri Excel", to_excel(df_skt_transfer), "skt_kurtarma_transferleri.xlsx")
                             with c12: st.download_button("📥 SKT Transfer Önerileri PDF", to_pdf(df_skt_transfer, "SKT Zayi Onleyici Transferler"), "skt_kurtarma_transferleri.pdf")
                         else:
-                            st.info("Aynı ilçe içerisinde bu aşıları süreleri dolmadan tüketebilecek uygun kapasitede bir ASM bulunamadı.")
+                            st.info("Aynı ilçe içerisinde bu aşıları süreleri dolmadan tüketebilecek uygun kapasitede bir ASM bulunamadı (veya kurtarılacak miktar 3 dozun altındaydı).")
 else:
     st.info("Lütfen Tüketim, Stok ve Master Birim listesi dosyalarını yükleyin.")
