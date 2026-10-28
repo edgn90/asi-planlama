@@ -661,7 +661,7 @@ if tuketim_file and stok_file and birim_file:
 
         with tab7:
             st.subheader("⏳ Son Kullanma Tarihi (SKT) Risk Analizi (Yakın Tarihli Aşılar)")
-            st.markdown("Sadece önümüzdeki **3 ay (90 gün)** içerisinde Son Kullanma Tarihi (SKT) dolacak olan aşılar mercek altına alınmıştır. Birimlerin mevcut **Günlük Tüketim Hızı** baz alınarak, bu yakın tarihli aşıların süreleri dolmadan tüketilip tüketilemeyeceği hesaplanır. SKT'si dolmadan tüketilemeyecek olanlar aşağıda listelenmiştir.")
+            st.markdown("Sadece önümüzdeki **1 ay (30 gün)** içerisinde Son Kullanma Tarihi (SKT) dolacak olan aşılar mercek altına alınmıştır. Birimlerin mevcut **Günlük Tüketim Hızı** baz alınarak, bu yakın tarihli aşıların süreleri dolmadan tüketilip tüketilemeyeceği hesaplanır. SKT'si dolmadan tüketilemeyecek olanlar aşağıda listelenmiştir.")
             
             if 'SKT' not in df_s_detay.columns or df_s_detay['SKT'].isna().all():
                 st.warning("⚠️ Yüklediğiniz Stok Raporunda 'Son Kullanma Tarihi' sütunu bulunamadı veya tarih formatları okunamadı.")
@@ -677,11 +677,11 @@ if tuketim_file and stok_file and birim_file:
                 bugun = pd.Timestamp.now()
                 skt_df['SKT_Kalan_Gun'] = (skt_df['SKT'] - bugun).dt.days
                 
-                # Önümüzdeki 3 ay (90 gün) filtresi
-                skt_df = skt_df[skt_df['SKT_Kalan_Gun'] <= 90].copy()
+                # --- SADECE ÖNÜMÜZDEKİ 1 AY (30 GÜN) İÇİNDE SKT'Sİ DOLACAKLAR FİLTRESİ ---
+                skt_df = skt_df[skt_df['SKT_Kalan_Gun'] <= 30].copy()
                 
                 if skt_df.empty:
-                    st.success("🎉 İnceleme tamamlandı: Önümüzdeki 3 ay (90 gün) içerisinde SKT'si dolacak herhangi bir aşı stoğu bulunmamaktadır.")
+                    st.success("🎉 İnceleme tamamlandı: Önümüzdeki 1 ay (30 gün) içerisinde SKT'si dolacak herhangi bir aşı stoğu bulunmamaktadır.")
                 else:
                     skt_df['Gereken_Gun'] = skt_df.apply(lambda r: r['STOK'] / r['Gunluk_Hiz'] if r['Gunluk_Hiz'] > 0 else 9999, axis=1)
                     
@@ -693,9 +693,9 @@ if tuketim_file and stok_file and birim_file:
                     risk_df = skt_df[skt_df['Risk_Durumu'] == True].copy()
                     
                     if risk_df.empty:
-                        st.success("🎉 Tebrikler! Önümüzdeki 3 ay içinde SKT'si dolacak aşılar mevcut olsa da, tüketim hızlarına göre tümünün zayi olmadan (süresi dolmadan) tüketileceği öngörülmektedir.")
+                        st.success("🎉 Tebrikler! Önümüzdeki 1 ay içinde SKT'si dolacak aşılar mevcut olsa da, tüketim hızlarına göre tümünün zayi olmadan (süresi dolmadan) tüketileceği öngörülmektedir.")
                     else:
-                        st.error(f"🚨 **DİKKAT:** Önümüzdeki 3 ay içinde SKT'si dolacak olan ve mevcut tüketim hızına göre süreleri bitmeden **tüketilemeyecek** {len(risk_df)} kalem aşı tespit edildi!")
+                        st.error(f"🚨 **DİKKAT:** Önümüzdeki 1 ay içinde SKT'si dolacak olan ve mevcut tüketim hızına göre süreleri bitmeden **tüketilemeyecek** {len(risk_df)} kalem aşı tespit edildi!")
                         
                         gorsel_risk_df = risk_df[['Ilce', 'Tip', 'BIRIM', 'URUN', 'STOK', 'SKT', 'SKT_Kalan_Gun', 'Gunluk_Hiz', 'Gereken_Gun']].copy()
                         gorsel_risk_df.rename(columns={
