@@ -661,6 +661,10 @@ if tuketim_file and stok_file and birim_file:
 
         with tab7:
             st.subheader("⏳ Son Kullanma Tarihi (SKT) Risk Analizi (Yakın Tarihli Aşılar)")
+            
+            # --- YENİ EKLENEN FİLTRE BUTONLARI ---
+            skt_analiz_turu = st.radio("Aşı Türü Filtresi:", ("Tüm Aşılar", "Sadece Tekli Doz Aşılar"), horizontal=True, key="skt_tab_filtre")
+            
             st.markdown("Sadece önümüzdeki **1 ay (30 gün)** içerisinde Son Kullanma Tarihi (SKT) dolacak olan aşılar mercek altına alınmıştır. Birimlerin mevcut **Günlük Tüketim Hızı** baz alınarak, bu yakın tarihli aşıların süreleri dolmadan tüketilip tüketilemeyeceği hesaplanır. SKT'si dolmadan tüketilemeyecek olanlar aşağıda listelenmiştir.")
             
             if 'SKT' not in df_s_detay.columns or df_s_detay['SKT'].isna().all():
@@ -672,16 +676,20 @@ if tuketim_file and stok_file and birim_file:
                 hiz_df = df_f[['Birim', 'Urun', 'Gunluk_Hiz', 'Ilce', 'Tip', 'Stok']].drop_duplicates()
                 skt_df = pd.merge(df_s_detay_grouped, hiz_df, left_on=['BIRIM', 'URUN'], right_on=['Birim', 'Urun'], how='inner')
                 
+                # --- TEKLİ DOZ AŞI FİLTRELEME İŞLEMİ (OPA VE BCG HARİÇ) ---
+                if "Tekli" in skt_analiz_turu:
+                    skt_df = skt_df[~skt_df['URUN'].str.upper().str.contains('BCG|POLIO|OPA', regex=True)]
+                
                 skt_df = skt_df[skt_df['STOK'] > 0].copy()
                 
                 bugun = pd.Timestamp.now()
                 skt_df['SKT_Kalan_Gun'] = (skt_df['SKT'] - bugun).dt.days
                 
-                # --- SADECE ÖNÜMÜZDEKİ 1 AY (30 GÜN) İÇİNDE SKT'Sİ DOLACAKLAR FİLTRESİ ---
+                # Önümüzdeki 1 ay (30 gün) filtresi
                 skt_df = skt_df[skt_df['SKT_Kalan_Gun'] <= 30].copy()
                 
                 if skt_df.empty:
-                    st.success("🎉 İnceleme tamamlandı: Önümüzdeki 1 ay (30 gün) içerisinde SKT'si dolacak herhangi bir aşı stoğu bulunmamaktadır.")
+                    st.success("🎉 İnceleme tamamlandı: Seçilen kritere göre önümüzdeki 1 ay (30 gün) içerisinde SKT'si dolacak herhangi bir aşı stoğu bulunmamaktadır.")
                 else:
                     skt_df['Gereken_Gun'] = skt_df.apply(lambda r: r['STOK'] / r['Gunluk_Hiz'] if r['Gunluk_Hiz'] > 0 else 9999, axis=1)
                     
@@ -751,7 +759,7 @@ if tuketim_file and stok_file and birim_file:
                                     break
                                 
                                 transfer_miktari = min(kurtarilacak, int(alici['Kapasite']))
-                                # --- 3 DOZ VE ÜZERİ TRANSFER KISITI ---
+                                # 3 DOZ VE ÜZERİ TRANSFER KISITI
                                 if transfer_miktari >= 3:
                                     skt_transferler.append({
                                         'İlçe': ilce,
